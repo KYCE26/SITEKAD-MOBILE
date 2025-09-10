@@ -55,8 +55,8 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 // --- DATA DUMMY ---
-const val OFFICE_LATITUDE = -6.89840767306817
-const val OFFICE_LONGITUDE = 107.6388094710972
+const val OFFICE_LATITUDE = -6.898382687844024
+const val OFFICE_LONGITUDE = 107.63881370142434
 const val MAX_DISTANCE_METERS = 500.0
 const val CORRECT_QR_ID = "SITEKAD-GS-01"
 
@@ -68,10 +68,10 @@ sealed class Screen(val route: String) {
     object Home : Screen("home_main")
     object Lembur : Screen("lembur")
     object Profile : Screen("profile")
-    object ConfirmAttendance : Screen("confirm_attendance/{scanResult}") {
-        fun createRoute(scanResult: String): String {
+    object ConfirmAttendance : Screen("confirm_attendance/{scanResult}/{attendanceType}") {
+        fun createRoute(scanResult: String, attendanceType: String): String {
             val encodedResult = URLEncoder.encode(scanResult, StandardCharsets.UTF_8.toString())
-            return "confirm_attendance/$encodedResult"
+            return "confirm_attendance/$encodedResult/$attendanceType"
         }
     }
 }
@@ -92,8 +92,12 @@ class HomeActivity : ComponentActivity() {
 @Composable
 fun MainAppScreen(username: String) {
     val navController = rememberNavController()
+    // --- SEMUA STATE UTAMA DIANGKAT KE SINI ---
     var attendanceStatus by remember { mutableStateOf("Belum Absen Hari Ini") }
     var isClockedIn by remember { mutableStateOf(false) }
+    var isClockedOut by remember { mutableStateOf(false) }
+    var clockInTime by remember { mutableStateOf("--:--") }
+    val attendanceHistory = remember { mutableStateListOf<AttendanceRecord>() }
 
     val bottomNavItems = listOf(
         Screen.Home, Screen.Lembur, Screen.Profile
@@ -152,21 +156,45 @@ fun MainAppScreen(username: String) {
                     username = username,
                     navController = navController,
                     attendanceStatus = attendanceStatus,
-                    isClockedIn = isClockedIn
+                    isClockedIn = isClockedIn,
+                    isClockedOut = isClockedOut,
+                    history = attendanceHistory
                 )
             }
             composable(
                 route = Screen.ConfirmAttendance.route,
-                arguments = listOf(navArgument("scanResult") { type = NavType.StringType })
+                arguments = listOf(
+                    navArgument("scanResult") { type = NavType.StringType },
+                    navArgument("attendanceType") { type = NavType.StringType }
+                )
             ) { backStackEntry ->
                 val encodedResult = backStackEntry.arguments?.getString("scanResult") ?: ""
                 val scanResult = URLDecoder.decode(encodedResult, StandardCharsets.UTF_8.toString())
+                val attendanceType = backStackEntry.arguments?.getString("attendanceType") ?: "in"
+
                 ConfirmationScreen(
                     navController = navController,
                     qrCodeId = scanResult,
+                    attendanceType = attendanceType,
                     onConfirm = { time, id ->
-                        attendanceStatus = "Hadir - Masuk pukul $time\nID: $id"
-                        isClockedIn = true
+                        if (attendanceType == "in") {
+                            attendanceStatus = "Hadir - Masuk pukul $time"
+                            isClockedIn = true
+                            clockInTime = time // Simpan waktu clock in
+                        } else {
+                            val today = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date())
+                            val day = SimpleDateFormat("E", Locale("id", "ID")).format(Date())
+                            val newRecord = AttendanceRecord(
+                                date = today,
+                                day = day,
+                                clockIn = clockInTime,
+                                clockOut = time,
+                                isLate = false // TODO: Tambah logika pengecekan telat
+                            )
+                            attendanceHistory.add(0, newRecord) // Tambah di paling atas
+                            isClockedOut = true
+                            attendanceStatus = "Anda sudah absen hari ini."
+                        }
                         navController.popBackStack()
                     }
                 )
@@ -178,9 +206,125 @@ fun MainAppScreen(username: String) {
 }
 
 @Composable
+fun HomeScreenContent(
+    username: String,
+    navController: NavHostController,
+    attendanceStatus: String,
+    isClockedIn: Boolean,
+    isClockedOut: Boolean,
+    history: List<AttendanceRecord>
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            UserHeader(username = username)
+            Spacer(modifier = Modifier.height(32.dp))
+        }
+        item {
+            ClockSection(navController, attendanceStatus, isClockedIn, isClockedOut)
+            Spacer(modifier = Modifier.height(32.dp))
+        }
+        item {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(imageVector = Icons.Default.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.onBackground)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Attendance History", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+        items(history) { record ->
+            HistoryItem(record = record)
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+fun ClockSection(
+    navController: NavHostController,
+    attendanceStatus: String,
+    isClockedIn: Boolean,
+    isClockedOut: Boolean
+) {
+    val context = LocalContext.current
+    var currentTime by remember { mutableStateOf("--:--:--") }
+    var currentDate by remember { mutableStateOf("") }
+
+    val scanLauncher = rememberLauncherForActivityResult(
+        contract = ScanContract(),
+        onResult = { result ->
+            if (result.contents != null) {
+                val type = if (!isClockedIn) "in" else "out"
+                navController.navigate(Screen.ConfirmAttendance.createRoute(result.contents, type))
+            } else {
+                Toast.makeText(context, "Scan Dibatalkan", Toast.LENGTH_SHORT).show()
+            }
+        }
+    )
+
+    val localeId = Locale("id", "ID")
+    LaunchedEffect(Unit) {
+        val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+        val dateFormat = SimpleDateFormat("EEEE, dd MMMM yyyy", localeId)
+        while (true) {
+            val now = Date()
+            currentTime = timeFormat.format(now)
+            currentDate = dateFormat.format(now)
+            delay(1000)
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(text = currentTime, fontSize = 56.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Text(text = currentDate, fontSize = 16.sp, color = MaterialTheme.colorScheme.secondary)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Status Kehadiran Anda:", color = MaterialTheme.colorScheme.secondary)
+        Text(
+            text = attendanceStatus,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (isClockedIn && !isClockedOut) Color(0xFF2ECC71) else MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Button(
+                onClick = {
+                    val options = ScanOptions()
+                    options.setPrompt("Arahkan kamera ke QR Code Absensi")
+                    options.setBeepEnabled(true)
+                    options.setOrientationLocked(true) // Mengunci orientasi
+                    scanLauncher.launch(options)
+                },
+                modifier = Modifier.weight(1f).height(50.dp),
+                enabled = !isClockedIn,
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("Clock In", fontWeight = FontWeight.Bold) }
+            OutlinedButton(
+                onClick = {
+                    val options = ScanOptions()
+                    options.setPrompt("Arahkan kamera ke QR Code Absensi")
+                    options.setBeepEnabled(true)
+                    options.setOrientationLocked(true) // Mengunci orientasi
+                    scanLauncher.launch(options)
+                },
+                modifier = Modifier.weight(1f).height(50.dp),
+                enabled = isClockedIn && !isClockedOut,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary)
+            ) { Text("Clock Out", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary) }
+        }
+    }
+}
+
+@Composable
 fun ConfirmationScreen(
     navController: NavHostController,
     qrCodeId: String,
+    attendanceType: String,
     onConfirm: (String, String) -> Unit
 ) {
     val context = LocalContext.current
@@ -203,7 +347,6 @@ fun ConfirmationScreen(
                             locationFetchStatus = "Lokasi ditemukan!"
                         } else {
                             locationFetchStatus = "Gagal mendapatkan lokasi."
-                            Toast.makeText(context, "Tidak bisa mendapatkan lokasi. Pastikan GPS aktif.", Toast.LENGTH_LONG).show()
                         }
                     }
             } else {
@@ -225,7 +368,6 @@ fun ConfirmationScreen(
                         locationFetchStatus = "Lokasi ditemukan!"
                     } else {
                         locationFetchStatus = "Gagal mendapatkan lokasi."
-                        Toast.makeText(context, "Tidak bisa mendapatkan lokasi. Pastikan GPS aktif.", Toast.LENGTH_LONG).show()
                     }
                 }
         } else {
@@ -239,7 +381,11 @@ fun ConfirmationScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("Konfirmasi Absensi", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text(
+                text = if (attendanceType == "in") "Konfirmasi Clock In" else "Konfirmasi Clock Out",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold
+            )
             Spacer(modifier = Modifier.height(32.dp))
             Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -264,7 +410,7 @@ fun ConfirmationScreen(
             Button(
                 onClick = {
                     if (currentLocation == null) {
-                        Toast.makeText(context, "Gagal mendapatkan lokasi. Coba lagi.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "Gagal mendapatkan lokasi. Pastikan GPS aktif.", Toast.LENGTH_LONG).show()
                         return@Button
                     }
                     if (qrCodeId != CORRECT_QR_ID) {
@@ -295,92 +441,6 @@ fun ConfirmationScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             TextButton(onClick = { navController.popBackStack() }) { Text("Batal", color = MaterialTheme.colorScheme.secondary) }
-        }
-    }
-}
-
-@Composable
-fun HomeScreenContent(username: String, navController: NavHostController, attendanceStatus: String, isClockedIn: Boolean) {
-    val dummyHistory = listOf(
-        AttendanceRecord("10 Sep 2025", "Wed", "08:00 AM", "05:00 PM"),
-        AttendanceRecord("09 Sep 2025", "Tue", "08:45 AM", "05:00 PM", isLate = true),
-        AttendanceRecord("08 Sep 2025", "Mon", "07:55 AM", "05:00 PM")
-    )
-    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        item {
-            Spacer(modifier = Modifier.height(16.dp)); UserHeader(username = username); Spacer(modifier = Modifier.height(32.dp))
-        }
-        item {
-            ClockSection(navController, attendanceStatus, isClockedIn); Spacer(modifier = Modifier.height(32.dp))
-        }
-        item {
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(imageVector = Icons.Default.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.onBackground)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Attendance History", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-        items(dummyHistory) { record ->
-            HistoryItem(record = record); Spacer(modifier = Modifier.height(12.dp))
-        }
-    }
-}
-
-@Composable
-fun ClockSection(navController: NavHostController, attendanceStatus: String, isClockedIn: Boolean) {
-    val context = LocalContext.current
-    var currentTime by remember { mutableStateOf("--:--:--") }
-    var currentDate by remember { mutableStateOf("") }
-    var isClockedOut by remember { mutableStateOf(false) }
-    val scanLauncher = rememberLauncherForActivityResult(
-        contract = ScanContract(),
-        onResult = { result ->
-            if (result.contents != null) {
-                navController.navigate(Screen.ConfirmAttendance.createRoute(result.contents))
-            } else {
-                Toast.makeText(context, "Scan Dibatalkan", Toast.LENGTH_SHORT).show()
-            }
-        }
-    )
-    val localeId = Locale("id", "ID")
-    LaunchedEffect(Unit) {
-        val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-        val dateFormat = SimpleDateFormat("EEEE, dd MMMM yyyy", localeId)
-        while (true) {
-            val now = Date()
-            currentTime = timeFormat.format(now)
-            currentDate = dateFormat.format(now)
-            delay(1000)
-        }
-    }
-    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = currentTime, fontSize = 56.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-        Text(text = currentDate, fontSize = 16.sp, color = MaterialTheme.colorScheme.secondary)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("Status Kehadiran Anda:", color = MaterialTheme.colorScheme.secondary)
-        Text(text = attendanceStatus, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (isClockedIn) Color(0xFF2ECC71) else MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center)
-        Spacer(modifier = Modifier.height(24.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Button(
-                onClick = {
-                    val options = ScanOptions()
-                    options.setPrompt("Arahkan kamera ke QR Code Absensi")
-                    options.setBeepEnabled(true)
-                    options.setOrientationLocked(false)
-                    scanLauncher.launch(options)
-                },
-                modifier = Modifier.weight(1f).height(50.dp),
-                enabled = !isClockedIn,
-                shape = RoundedCornerShape(12.dp)
-            ) { Text("Clock In", fontWeight = FontWeight.Bold) }
-            OutlinedButton(
-                onClick = { /* TODO: Tambah logika clock out */ },
-                modifier = Modifier.weight(1f).height(50.dp),
-                enabled = isClockedIn && !isClockedOut,
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary)
-            ) { Text("Clock Out", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary) }
         }
     }
 }
