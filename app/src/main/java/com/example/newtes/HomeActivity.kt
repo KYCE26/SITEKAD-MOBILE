@@ -1,8 +1,15 @@
 package com.example.newtes // Sesuaikan dengan package name Anda
 
+import android.Manifest
+import android.app.Activity
+import android.content.pm.PackageManager
+import android.location.Location
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
@@ -12,46 +19,61 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector // <-- IMPORT PENTING YANG KURANG
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.newtes.ui.theme.NewTesTheme
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.delay
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.*
-import androidx.compose.ui.platform.LocalContext
-import android.app.Activity
 
-// Data Class untuk menampung data riwayat absensi
+// --- DATA DUMMY ---
+const val OFFICE_LATITUDE = -6.89840767306817
+const val OFFICE_LONGITUDE = 107.6388094710972
+const val MAX_DISTANCE_METERS = 500.0
+const val CORRECT_QR_ID = "SITEKAD-GS-01"
+
 data class AttendanceRecord(
-    val date: String,
-    val day: String,
-    val clockIn: String,
-    val clockOut: String,
-    val isLate: Boolean = false
+    val date: String, val day: String, val clockIn: String, val clockOut: String, val isLate: Boolean = false
 )
 
-// Rute untuk Navigasi Bawah
-sealed class BottomNavItem(val route: String, val icon: ImageVector, val title: String) {
-    object Home : BottomNavItem("home_main", Icons.Default.Home, "Home")
-    object Lembur : BottomNavItem("lembur", Icons.Default.Notifications, "Lembur")
-    object Profile : BottomNavItem("profile", Icons.Default.Person, "Profile")
+sealed class Screen(val route: String) {
+    object Home : Screen("home_main")
+    object Lembur : Screen("lembur")
+    object Profile : Screen("profile")
+    object ConfirmAttendance : Screen("confirm_attendance/{scanResult}") {
+        fun createRoute(scanResult: String): String {
+            val encodedResult = URLEncoder.encode(scanResult, StandardCharsets.UTF_8.toString())
+            return "confirm_attendance/$encodedResult"
+        }
+    }
 }
 
 class HomeActivity : ComponentActivity() {
@@ -66,23 +88,20 @@ class HomeActivity : ComponentActivity() {
     }
 }
 
-// Wrapper untuk Scaffold dan Navigasi
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainAppScreen(username: String) {
     val navController = rememberNavController()
+    var attendanceStatus by remember { mutableStateOf("Belum Absen Hari Ini") }
+    var isClockedIn by remember { mutableStateOf(false) }
+
     val bottomNavItems = listOf(
-        BottomNavItem.Home,
-        BottomNavItem.Lembur,
-        BottomNavItem.Profile
+        Screen.Home, Screen.Lembur, Screen.Profile
     )
 
     Scaffold(
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 5.dp
-            ) {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 5.dp) {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
                 bottomNavItems.forEach { item ->
@@ -95,8 +114,22 @@ fun MainAppScreen(username: String) {
                                 restoreState = true
                             }
                         },
-                        icon = { Icon(item.icon, contentDescription = item.title) },
-                        label = { Text(item.title) },
+                        icon = {
+                            when (item) {
+                                is Screen.Home -> Icon(Icons.Default.Home, contentDescription = "Home")
+                                is Screen.Lembur -> Icon(Icons.Default.Notifications, contentDescription = "Lembur")
+                                is Screen.Profile -> Icon(Icons.Default.Person, contentDescription = "Profile")
+                                else -> {}
+                            }
+                        },
+                        label = {
+                            when (item) {
+                                is Screen.Home -> Text("Home")
+                                is Screen.Lembur -> Text("Lembur")
+                                is Screen.Profile -> Text("Profile")
+                                else -> {}
+                            }
+                        },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.primary,
                             selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -111,74 +144,177 @@ fun MainAppScreen(username: String) {
     ) { paddingValues ->
         NavHost(
             navController = navController,
-            startDestination = BottomNavItem.Home.route,
+            startDestination = Screen.Home.route,
             modifier = Modifier.padding(paddingValues)
         ) {
-            composable(BottomNavItem.Home.route) {
-                HomeScreenContent(username = username)
+            composable(Screen.Home.route) {
+                HomeScreenContent(
+                    username = username,
+                    navController = navController,
+                    attendanceStatus = attendanceStatus,
+                    isClockedIn = isClockedIn
+                )
             }
-            composable(BottomNavItem.Lembur.route) {
-                PlaceholderScreen(text = "Halaman Permintaan Lembur")
+            composable(
+                route = Screen.ConfirmAttendance.route,
+                arguments = listOf(navArgument("scanResult") { type = NavType.StringType })
+            ) { backStackEntry ->
+                val encodedResult = backStackEntry.arguments?.getString("scanResult") ?: ""
+                val scanResult = URLDecoder.decode(encodedResult, StandardCharsets.UTF_8.toString())
+                ConfirmationScreen(
+                    navController = navController,
+                    qrCodeId = scanResult,
+                    onConfirm = { time, id ->
+                        attendanceStatus = "Hadir - Masuk pukul $time\nID: $id"
+                        isClockedIn = true
+                        navController.popBackStack()
+                    }
+                )
             }
-            composable(BottomNavItem.Profile.route) {
-                PlaceholderScreen(text = "Halaman Profil Pengguna")
-            }
+            composable(Screen.Lembur.route) { PlaceholderScreen(text = "Halaman Permintaan Lembur") }
+            composable(Screen.Profile.route) { PlaceholderScreen(text = "Halaman Profil Pengguna") }
         }
     }
 }
 
-// Composable untuk layar placeholder
 @Composable
-fun PlaceholderScreen(text: String) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = text,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontSize = 20.sp
-        )
-    }
-}
+fun ConfirmationScreen(
+    navController: NavHostController,
+    qrCodeId: String,
+    onConfirm: (String, String) -> Unit
+) {
+    val context = LocalContext.current
+    var currentLocation by remember { mutableStateOf<Location?>(null) }
+    var locationFetchStatus by remember { mutableStateOf("Meminta izin lokasi...") }
+    val timeNow = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+    val dateNow = SimpleDateFormat("EEEE, dd MMMM yyyy", Locale("id", "ID")).format(Date())
 
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
 
-// Konten Layar Home
-@Composable
-fun HomeScreenContent(username: String) {
-    val dummyHistory = listOf(
-        AttendanceRecord("14 April 2023", "Fri", "08:00 AM", "05:00 PM"),
-        AttendanceRecord("13 April 2023", "Thu", "08:45 AM", "05:00 PM", isLate = true),
-        AttendanceRecord("12 April 2023", "Wed", "07:55 AM", "05:00 PM"),
-        AttendanceRecord("11 April 2023", "Tue", "07:58 AM", "05:00 PM"),
-        AttendanceRecord("10 April 2023", "Mon", "08:15 AM", "05:00 PM", isLate = true),
-        AttendanceRecord("14 April 2023", "Fri", "08:00 AM", "05:00 PM"),
-        AttendanceRecord("13 April 2023", "Thu", "08:45 AM", "05:00 PM", isLate = true),
-        AttendanceRecord("12 April 2023", "Wed", "07:55 AM", "05:00 PM"),
-        AttendanceRecord("11 April 2023", "Tue", "07:58 AM", "05:00 PM"),
-        AttendanceRecord("10 April 2023", "Mon", "08:15 AM", "05:00 PM", isLate = true)
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+        onResult = { permissions ->
+            if (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
+                locationFetchStatus = "Mencari lokasi Anda..."
+                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+                    .addOnSuccessListener { location: Location? ->
+                        if (location != null) {
+                            currentLocation = location
+                            locationFetchStatus = "Lokasi ditemukan!"
+                        } else {
+                            locationFetchStatus = "Gagal mendapatkan lokasi."
+                            Toast.makeText(context, "Tidak bisa mendapatkan lokasi. Pastikan GPS aktif.", Toast.LENGTH_LONG).show()
+                        }
+                    }
+            } else {
+                locationFetchStatus = "Izin lokasi ditolak."
+                Toast.makeText(context, "Aplikasi memerlukan izin lokasi untuk absen", Toast.LENGTH_LONG).show()
+                navController.popBackStack()
+            }
+        }
     )
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        item {
-            Spacer(modifier = Modifier.height(16.dp))
-            UserHeader(username = username)
-            Spacer(modifier = Modifier.height(32.dp))
+    LaunchedEffect(Unit) {
+        val permissionsToRequest = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        if (permissionsToRequest.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
+            locationFetchStatus = "Mencari lokasi Anda..."
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+                .addOnSuccessListener { location: Location? ->
+                    if (location != null) {
+                        currentLocation = location
+                        locationFetchStatus = "Lokasi ditemukan!"
+                    } else {
+                        locationFetchStatus = "Gagal mendapatkan lokasi."
+                        Toast.makeText(context, "Tidak bisa mendapatkan lokasi. Pastikan GPS aktif.", Toast.LENGTH_LONG).show()
+                    }
+                }
+        } else {
+            permissionLauncher.launch(permissionsToRequest)
         }
-        item {
-            ClockSection()
+    }
+
+    Surface(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text("Konfirmasi Absensi", fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(32.dp))
-        }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Waktu", color = MaterialTheme.colorScheme.secondary); Text(timeNow, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Tanggal", color = MaterialTheme.colorScheme.secondary); Text(dateNow, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("ID Lokasi", color = MaterialTheme.colorScheme.secondary); Text(qrCodeId, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Status Lokasi", color = MaterialTheme.colorScheme.secondary); Text(locationFetchStatus, fontWeight = FontWeight.Bold, color = if (currentLocation != null) Color(0xFF2ECC71) else MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(48.dp))
+            Button(
+                onClick = {
+                    if (currentLocation == null) {
+                        Toast.makeText(context, "Gagal mendapatkan lokasi. Coba lagi.", Toast.LENGTH_LONG).show()
+                        return@Button
+                    }
+                    if (qrCodeId != CORRECT_QR_ID) {
+                        Toast.makeText(context, "Gagal: QR Code lokasi tidak valid!", Toast.LENGTH_LONG).show()
+                        return@Button
+                    }
+                    val distanceResults = FloatArray(1)
+                    Location.distanceBetween(
+                        currentLocation!!.latitude, currentLocation!!.longitude,
+                        OFFICE_LATITUDE, OFFICE_LONGITUDE,
+                        distanceResults
+                    )
+                    val distanceInMeters = distanceResults[0]
+                    if (distanceInMeters <= MAX_DISTANCE_METERS) {
+                        onConfirm(timeNow, qrCodeId)
+                    } else {
+                        Toast.makeText(context, "Gagal: Anda berada terlalu jauh dari kantor! (Jarak: ${distanceInMeters.toInt()} meter)", Toast.LENGTH_LONG).show()
+                    }
+                },
+                enabled = currentLocation != null,
+                modifier = Modifier.fillMaxWidth().height(50.dp)
             ) {
+                if (currentLocation == null) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
+                } else {
+                    Text("Kirim Absen", fontSize = 18.sp)
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = { navController.popBackStack() }) { Text("Batal", color = MaterialTheme.colorScheme.secondary) }
+        }
+    }
+}
+
+@Composable
+fun HomeScreenContent(username: String, navController: NavHostController, attendanceStatus: String, isClockedIn: Boolean) {
+    val dummyHistory = listOf(
+        AttendanceRecord("10 Sep 2025", "Wed", "08:00 AM", "05:00 PM"),
+        AttendanceRecord("09 Sep 2025", "Tue", "08:45 AM", "05:00 PM", isLate = true),
+        AttendanceRecord("08 Sep 2025", "Mon", "07:55 AM", "05:00 PM")
+    )
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        item {
+            Spacer(modifier = Modifier.height(16.dp)); UserHeader(username = username); Spacer(modifier = Modifier.height(32.dp))
+        }
+        item {
+            ClockSection(navController, attendanceStatus, isClockedIn); Spacer(modifier = Modifier.height(32.dp))
+        }
+        item {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Icon(imageVector = Icons.Default.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.onBackground)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Attendance History", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
@@ -186,46 +322,28 @@ fun HomeScreenContent(username: String) {
             Spacer(modifier = Modifier.height(16.dp))
         }
         items(dummyHistory) { record ->
-            HistoryItem(record = record)
-            Spacer(modifier = Modifier.height(12.dp))
+            HistoryItem(record = record); Spacer(modifier = Modifier.height(12.dp))
         }
     }
 }
 
-// UserHeader tetap sama
 @Composable
-fun UserHeader(username: String) {
-    // Dapatkan context saat ini
+fun ClockSection(navController: NavHostController, attendanceStatus: String, isClockedIn: Boolean) {
     val context = LocalContext.current
-
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Image(painter = painterResource(id = R.drawable.logo), contentDescription = "User Avatar", modifier = Modifier.size(50.dp).clip(CircleShape))
-        Spacer(modifier = Modifier.width(12.dp))
-        Column {
-            Text(text = username, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = MaterialTheme.colorScheme.onBackground)
-            Text(text = "27738749 - Senior UX Designer", fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary)
-        }
-        Spacer(modifier = Modifier.weight(1f))
-        IconButton(onClick = {
-            // --- LOGIKA LOGOUT BARU ---
-            // Mengubah context menjadi Activity, lalu memanggil finish() untuk menutupnya.
-            (context as? Activity)?.finish()
-        }) {
-            Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.secondary)
-        }
-    }
-}
-// ClockSection tetap sama
-@Composable
-fun ClockSection() {
     var currentTime by remember { mutableStateOf("--:--:--") }
     var currentDate by remember { mutableStateOf("") }
-    var isClockedIn by remember { mutableStateOf(false) }
     var isClockedOut by remember { mutableStateOf(false) }
-
-    // Menggunakan Locale yang lebih modern untuk menghindari warning
+    val scanLauncher = rememberLauncherForActivityResult(
+        contract = ScanContract(),
+        onResult = { result ->
+            if (result.contents != null) {
+                navController.navigate(Screen.ConfirmAttendance.createRoute(result.contents))
+            } else {
+                Toast.makeText(context, "Scan Dibatalkan", Toast.LENGTH_SHORT).show()
+            }
+        }
+    )
     val localeId = Locale("id", "ID")
-
     LaunchedEffect(Unit) {
         val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         val dateFormat = SimpleDateFormat("EEEE, dd MMMM yyyy", localeId)
@@ -236,23 +354,28 @@ fun ClockSection() {
             delay(1000)
         }
     }
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(text = currentTime, fontSize = 56.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
         Text(text = currentDate, fontSize = 16.sp, color = MaterialTheme.colorScheme.secondary)
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Status Kehadiran Anda:", color = MaterialTheme.colorScheme.secondary)
+        Text(text = attendanceStatus, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (isClockedIn) Color(0xFF2ECC71) else MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center)
+        Spacer(modifier = Modifier.height(24.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Button(
-                onClick = { isClockedIn = true },
+                onClick = {
+                    val options = ScanOptions()
+                    options.setPrompt("Arahkan kamera ke QR Code Absensi")
+                    options.setBeepEnabled(true)
+                    options.setOrientationLocked(false)
+                    scanLauncher.launch(options)
+                },
                 modifier = Modifier.weight(1f).height(50.dp),
                 enabled = !isClockedIn,
                 shape = RoundedCornerShape(12.dp)
             ) { Text("Clock In", fontWeight = FontWeight.Bold) }
             OutlinedButton(
-                onClick = { isClockedOut = true },
+                onClick = { /* TODO: Tambah logika clock out */ },
                 modifier = Modifier.weight(1f).height(50.dp),
                 enabled = isClockedIn && !isClockedOut,
                 shape = RoundedCornerShape(12.dp),
@@ -262,7 +385,30 @@ fun ClockSection() {
     }
 }
 
-// HistoryItem tetap sama
+@Composable
+fun PlaceholderScreen(text: String) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(text = text, color = MaterialTheme.colorScheme.onBackground, fontSize = 20.sp)
+    }
+}
+
+@Composable
+fun UserHeader(username: String) {
+    val context = LocalContext.current
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Image(painter = painterResource(id = R.drawable.logo), contentDescription = "User Avatar", modifier = Modifier.size(50.dp).clip(CircleShape))
+        Spacer(modifier = Modifier.width(12.dp))
+        Column {
+            Text(text = username, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = MaterialTheme.colorScheme.onBackground)
+            Text(text = "27738749 - Senior UX Designer", fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary)
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        IconButton(onClick = { (context as? Activity)?.finish() }) {
+            Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.secondary)
+        }
+    }
+}
+
 @Composable
 fun HistoryItem(record: AttendanceRecord) {
     Card(
