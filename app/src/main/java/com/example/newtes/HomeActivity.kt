@@ -2,9 +2,13 @@ package com.example.newtes // Sesuaikan dengan package name Anda
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -12,6 +16,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -41,6 +49,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import coil.compose.AsyncImage
 import com.example.newtes.ui.theme.NewTesTheme
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -48,6 +57,7 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -92,12 +102,23 @@ class HomeActivity : ComponentActivity() {
 @Composable
 fun MainAppScreen(username: String) {
     val navController = rememberNavController()
-    // --- SEMUA STATE UTAMA DIANGKAT KE SINI ---
-    var attendanceStatus by remember { mutableStateOf("Belum Absen Hari Ini") }
-    var isClockedIn by remember { mutableStateOf(false) }
-    var isClockedOut by remember { mutableStateOf(false) }
-    var clockInTime by remember { mutableStateOf("--:--") }
+    // --- STATE UTAMA ABSEN REGULER ---
+    var attendanceStatus by rememberSaveable { mutableStateOf("Belum Absen Hari Ini") }
+    var isClockedIn by rememberSaveable { mutableStateOf(false) }
+    var isClockedOut by rememberSaveable { mutableStateOf(false) }
+    var clockInTime by rememberSaveable { mutableStateOf("--:--") }
     val attendanceHistory = remember { mutableStateListOf<AttendanceRecord>() }
+
+    // --- STATE UTAMA ABSEN LEMBUR ---
+    var lemburStatus by rememberSaveable { mutableStateOf("Belum Lembur Hari Ini") }
+    var isLemburClockedIn by rememberSaveable { mutableStateOf(false) }
+    var isLemburClockedOut by rememberSaveable { mutableStateOf(false) }
+    var lemburClockInTime by rememberSaveable { mutableStateOf("--:--") }
+    val lemburHistory = remember { mutableStateListOf<AttendanceRecord>() }
+    var fileUriString by rememberSaveable { mutableStateOf<String?>(null) }
+    var fileName by rememberSaveable { mutableStateOf<String?>(null) }
+    var isSplSubmitted by rememberSaveable { mutableStateOf(false) }
+
 
     val bottomNavItems = listOf(
         Screen.Home, Screen.Lembur, Screen.Profile
@@ -168,8 +189,7 @@ fun MainAppScreen(username: String) {
                     navArgument("attendanceType") { type = NavType.StringType }
                 )
             ) { backStackEntry ->
-                val encodedResult = backStackEntry.arguments?.getString("scanResult") ?: ""
-                val scanResult = URLDecoder.decode(encodedResult, StandardCharsets.UTF_8.toString())
+                val scanResult = URLDecoder.decode(backStackEntry.arguments?.getString("scanResult") ?: "", StandardCharsets.UTF_8.toString())
                 val attendanceType = backStackEntry.arguments?.getString("attendanceType") ?: "in"
 
                 ConfirmationScreen(
@@ -177,33 +197,70 @@ fun MainAppScreen(username: String) {
                     qrCodeId = scanResult,
                     attendanceType = attendanceType,
                     onConfirm = { time, id ->
-                        if (attendanceType == "in") {
-                            attendanceStatus = "Hadir - Masuk pukul $time"
-                            isClockedIn = true
-                            clockInTime = time // Simpan waktu clock in
-                        } else {
-                            val today = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date())
-                            val day = SimpleDateFormat("E", Locale("id", "ID")).format(Date())
-                            val newRecord = AttendanceRecord(
-                                date = today,
-                                day = day,
-                                clockIn = clockInTime,
-                                clockOut = time,
-                                isLate = false // TODO: Tambah logika pengecekan telat
-                            )
-                            attendanceHistory.add(0, newRecord) // Tambah di paling atas
-                            isClockedOut = true
-                            attendanceStatus = "Anda sudah absen hari ini."
+                        when (attendanceType) {
+                            "in" -> {
+                                attendanceStatus = "Hadir - Masuk pukul $time"
+                                isClockedIn = true
+                                clockInTime = time
+                            }
+                            "out" -> {
+                                val newRecord = AttendanceRecord(
+                                    date = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date()),
+                                    day = SimpleDateFormat("E", Locale("id", "ID")).format(Date()),
+                                    clockIn = clockInTime,
+                                    clockOut = time,
+                                    isLate = false
+                                )
+                                attendanceHistory.add(0, newRecord)
+                                isClockedOut = true
+                                attendanceStatus = "Anda sudah absen hari ini."
+                            }
+                            "in-lembur" -> {
+                                lemburStatus = "Lembur - Masuk pukul $time"
+                                isLemburClockedIn = true
+                                lemburClockInTime = time
+                            }
+                            "out-lembur" -> {
+                                val newRecord = AttendanceRecord(
+                                    date = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date()),
+                                    day = SimpleDateFormat("E", Locale("id", "ID")).format(Date()),
+                                    clockIn = lemburClockInTime,
+                                    clockOut = time,
+                                    isLate = false
+                                )
+                                lemburHistory.add(0, newRecord)
+                                isLemburClockedOut = true
+                                lemburStatus = "Anda sudah selesai lembur hari ini."
+                            }
                         }
                         navController.popBackStack()
                     }
                 )
             }
-            composable(Screen.Lembur.route) { PlaceholderScreen(text = "Halaman Permintaan Lembur") }
+            composable(Screen.Lembur.route) {
+                val context = LocalContext.current
+                LemburScreen(
+                    username = username,
+                    navController = navController,
+                    lemburStatus = lemburStatus,
+                    isLemburClockedIn = isLemburClockedIn,
+                    isLemburClockedOut = isLemburClockedOut,
+                    history = lemburHistory,
+                    fileName = fileName,
+                    isSplSubmitted = isSplSubmitted,
+                    onFileSelected = { uri ->
+                        fileUriString = uri.toString()
+                        fileName = getFileName(context, uri)
+                        isSplSubmitted = false
+                    },
+                    onSplSubmit = { isSplSubmitted = true }
+                )
+            }
             composable(Screen.Profile.route) { PlaceholderScreen(text = "Halaman Profil Pengguna") }
         }
     }
 }
+
 
 @Composable
 fun HomeScreenContent(
@@ -247,7 +304,8 @@ fun ClockSection(
     navController: NavHostController,
     attendanceStatus: String,
     isClockedIn: Boolean,
-    isClockedOut: Boolean
+    isClockedOut: Boolean,
+    isLembur: Boolean = false
 ) {
     val context = LocalContext.current
     var currentTime by remember { mutableStateOf("--:--:--") }
@@ -257,7 +315,11 @@ fun ClockSection(
         contract = ScanContract(),
         onResult = { result ->
             if (result.contents != null) {
-                val type = if (!isClockedIn) "in" else "out"
+                val type = if (!isClockedIn) {
+                    if (isLembur) "in-lembur" else "in"
+                } else {
+                    if (isLembur) "out-lembur" else "out"
+                }
                 navController.navigate(Screen.ConfirmAttendance.createRoute(result.contents, type))
             } else {
                 Toast.makeText(context, "Scan Dibatalkan", Toast.LENGTH_SHORT).show()
@@ -296,29 +358,30 @@ fun ClockSection(
                     val options = ScanOptions()
                     options.setPrompt("Arahkan kamera ke QR Code Absensi")
                     options.setBeepEnabled(true)
-                    options.setOrientationLocked(true) // Mengunci orientasi
+                    options.setOrientationLocked(true)
                     scanLauncher.launch(options)
                 },
                 modifier = Modifier.weight(1f).height(50.dp),
                 enabled = !isClockedIn,
                 shape = RoundedCornerShape(12.dp)
-            ) { Text("Clock In", fontWeight = FontWeight.Bold) }
+            ) { Text(if(isLembur) "Clock In Lembur" else "Clock In", fontWeight = FontWeight.Bold) }
             OutlinedButton(
                 onClick = {
                     val options = ScanOptions()
                     options.setPrompt("Arahkan kamera ke QR Code Absensi")
                     options.setBeepEnabled(true)
-                    options.setOrientationLocked(true) // Mengunci orientasi
+                    options.setOrientationLocked(true)
                     scanLauncher.launch(options)
                 },
                 modifier = Modifier.weight(1f).height(50.dp),
                 enabled = isClockedIn && !isClockedOut,
                 shape = RoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary)
-            ) { Text("Clock Out", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary) }
+            ) { Text(if(isLembur) "Clock Out Lembur" else "Clock Out", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary) }
         }
     }
 }
+
 
 @Composable
 fun ConfirmationScreen(
@@ -382,7 +445,13 @@ fun ConfirmationScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = if (attendanceType == "in") "Konfirmasi Clock In" else "Konfirmasi Clock Out",
+                text = when (attendanceType) {
+                    "in" -> "Konfirmasi Clock In"
+                    "out" -> "Konfirmasi Clock Out"
+                    "in-lembur" -> "Konfirmasi Clock In Lembur"
+                    "out-lembur" -> "Konfirmasi Clock Out Lembur"
+                    else -> "Konfirmasi Absensi"
+                },
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -443,6 +512,156 @@ fun ConfirmationScreen(
             TextButton(onClick = { navController.popBackStack() }) { Text("Batal", color = MaterialTheme.colorScheme.secondary) }
         }
     }
+}
+
+
+@Composable
+fun LemburScreen(
+    username: String,
+    navController: NavHostController,
+    lemburStatus: String,
+    isLemburClockedIn: Boolean,
+    isLemburClockedOut: Boolean,
+    history: List<AttendanceRecord>,
+    fileName: String?,
+    isSplSubmitted: Boolean,
+    onFileSelected: (Uri) -> Unit,
+    onSplSubmit: () -> Unit
+) {
+    var isUploading by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+        onResult = { uri: Uri? ->
+            uri?.let {
+                onFileSelected(it)
+            }
+        }
+    )
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            UserHeader(username = username)
+            Spacer(modifier = Modifier.height(32.dp))
+            Text("Pengajuan Lembur", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        item {
+            Text("1. Upload Surat Perintah Lembur (SPL)", style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(16.dp))
+            FilePickerBox(fileName = fileName, onClick = { if (!isUploading) filePickerLauncher.launch("*/*") })
+        }
+
+        if (fileName != null && !isSplSubmitted) {
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        coroutineScope.launch {
+                            isUploading = true
+                            delay(2000)
+                            onSplSubmit()
+                            isUploading = false
+                            Toast.makeText(context, "SPL berhasil dikirim!", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(50.dp)
+                ) {
+                    if (isUploading) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
+                    } else {
+                        Text("Kirim SPL")
+                    }
+                }
+            }
+        }
+
+        if (isSplSubmitted) {
+            item {
+                Divider(modifier = Modifier.padding(vertical = 32.dp))
+                Text("2. Lakukan Absensi Lembur", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(16.dp))
+                ClockSection(
+                    navController = navController,
+                    attendanceStatus = lemburStatus,
+                    isClockedIn = isLemburClockedIn,
+                    isClockedOut = isLemburClockedOut,
+                    isLembur = true
+                )
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(32.dp))
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.onBackground)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Riwayat Lembur", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+            items(history) { record ->
+                HistoryItem(record = record)
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+        }
+    }
+}
+
+
+@Composable
+fun FilePickerBox(fileName: String?, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(150.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (fileName == null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(imageVector = Icons.Default.CloudUpload, contentDescription = "Upload Icon", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(48.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Klik untuk memilih file SPL\n(Gambar atau PDF)", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center)
+            }
+        } else {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(imageVector = Icons.Default.InsertDriveFile, contentDescription = "File Icon", tint = Color(0xFF2ECC71), modifier = Modifier.size(48.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("File Terpilih:", color = MaterialTheme.colorScheme.secondary)
+                Text(
+                    text = fileName,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+fun getFileName(context: Context, uri: Uri): String? {
+    var fileName: String? = null
+    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) {
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (nameIndex != -1) {
+                fileName = cursor.getString(nameIndex)
+            }
+        }
+    }
+    return fileName
 }
 
 @Composable

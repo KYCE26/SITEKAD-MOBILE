@@ -40,6 +40,8 @@ android {
 }
 
 dependencies {
+    implementation("com.android.volley:volley:1.2.1")
+    implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("com.google.android.gms:play-services-location:21.2.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("androidx.navigation:navigation-compose:2.7.7")
@@ -52,6 +54,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui.text)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -1,5 +1,6 @@
 package com.example.newtes // Sesuaikan dengan package name Anda
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
@@ -17,6 +18,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -27,7 +29,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.android.volley.Request
+import com.android.volley.toolbox.StringRequest
+import com.android.volley.toolbox.Volley
 import com.example.newtes.ui.theme.NewTesTheme
+import org.json.JSONObject
 
 // Enum untuk menentukan state tampilan
 enum class AuthState {
@@ -135,11 +141,12 @@ fun sitekadTextFieldColors() = TextFieldDefaults.colors(
 
 @Composable
 fun LoginForm(onBackClick: () -> Unit) {
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("Dapensi") } // Contoh isi
+    var password by remember { mutableStateOf("Dtu123") } // Contoh isi
     val context = LocalContext.current
-    val correctUsername = "user"
-    val correctPassword = "password123"
+    var isLoading by remember { mutableStateOf(false) }
+
+    val requestQueue = remember { Volley.newRequestQueue(context) }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = sitekadTextFieldColors())
@@ -148,25 +155,72 @@ fun LoginForm(onBackClick: () -> Unit) {
         Spacer(modifier = Modifier.height(24.dp))
         Button(
             onClick = {
-                if (username == correctUsername && password == correctPassword) {
-                    Toast.makeText(context, "Login Berhasil!", Toast.LENGTH_SHORT).show()
-                    val intent = Intent(context, HomeActivity::class.java)
-                    intent.putExtra("EXTRA_USERNAME", username)
-                    context.startActivity(intent)
-                } else {
-                    Toast.makeText(context, "Username atau Password Salah!", Toast.LENGTH_SHORT).show()
+                isLoading = true
+                val url = "http://192.168.6.55:8080/login" // GANTI DENGAN IP ANDA
+
+                val stringRequest = object : StringRequest(
+                    Method.POST, url,
+                    { response -> // Jika SUKSES
+                        isLoading = false
+                        Toast.makeText(context, "Login Berhasil!", Toast.LENGTH_SHORT).show()
+
+                        val jwtToken = response
+
+                        val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+                        with(sharedPreferences.edit()) {
+                            putString("jwt_token", jwtToken)
+                            apply()
+                        }
+
+                        val intent = Intent(context, HomeActivity::class.java)
+                        intent.putExtra("EXTRA_USERNAME", username)
+                        context.startActivity(intent)
+                    },
+                    { error -> // Jika GAGAL
+                        isLoading = false
+                        val errorMessage = error.networkResponse?.let {
+                            String(it.data)
+                        } ?: "Login Gagal: ${error.message}"
+
+                        Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                        Log.e("LOGIN_API", "Error: ${error.toString()}")
+                    }) {
+
+                    // --- PERUBAHAN UTAMA ADA DI SINI ---
+                    // 1. Kita beritahu server bahwa kita mengirim JSON
+                    override fun getBodyContentType(): String {
+                        return "application/json; charset=utf-8"
+                    }
+
+                    // 2. Kita buat sendiri body request dalam format JSON
+                    override fun getBody(): ByteArray {
+                        val jsonBody = JSONObject()
+                        jsonBody.put("username", username)
+                        jsonBody.put("password", password)
+                        return jsonBody.toString().toByteArray(Charsets.UTF_8)
+                    }
+
+                    // getParams() tidak lagi digunakan, karena kita sudah pakai getBody()
                 }
+
+                requestQueue.add(stringRequest)
             },
+            enabled = !isLoading,
             modifier = Modifier.fillMaxWidth().height(50.dp),
             shape = RoundedCornerShape(12.dp)
-        ) { Text(text = "MASUK", fontWeight = FontWeight.Bold) }
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
+            } else {
+                Text(text = "MASUK", fontWeight = FontWeight.Bold)
+            }
+        }
         TextButton(onClick = { Log.d("LoginForm", "Tombol Lupa Password diklik!") }, modifier = Modifier.padding(top = 8.dp)) {
             Text(text = "Lupa Password?", color = MaterialTheme.colorScheme.secondary)
         }
         TextButton(onClick = onBackClick) { Text(text = "Kembali", color = MaterialTheme.colorScheme.secondary) }
     }
 }
-
 @Composable
 fun RegisterForm(onBackClick: () -> Unit) {
     var fullname by remember { mutableStateOf("") }
