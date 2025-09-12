@@ -9,11 +9,14 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -34,7 +37,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +54,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage
 import com.android.volley.AuthFailureError
+import com.android.volley.Request
+import com.android.volley.toolbox.JsonObjectRequest
 import com.android.volley.toolbox.StringRequest
 import com.android.volley.toolbox.Volley
 import com.example.newtes.ui.theme.NewTesTheme
@@ -68,6 +72,10 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.*
+
+// --- DATA DUMMY (HANYA UNTUK VALIDASI FRONTEND) ---
+const val MAX_DISTANCE_METERS = 500.0
+const val CORRECT_QR_ID = "SITEKAD-GS-01" // Contoh ID QR yang dianggap benar
 
 data class AttendanceRecord(
     val date: String, val day: String, val clockIn: String, val clockOut: String, val isLate: Boolean = false
@@ -140,9 +148,9 @@ fun MainAppScreen(username: String) {
                         },
                         icon = {
                             when (item) {
-                                is Screen.Home -> Icon(Icons.Default.Home, contentDescription = "Home")
-                                is Screen.Lembur -> Icon(Icons.Default.Notifications, contentDescription = "Lembur")
-                                is Screen.Profile -> Icon(Icons.Default.Person, contentDescription = "Profile")
+                                is Screen.Home -> Icon(Icons.Filled.Home, contentDescription = "Home")
+                                is Screen.Lembur -> Icon(Icons.Filled.Notifications, contentDescription = "Lembur")
+                                is Screen.Profile -> Icon(Icons.Filled.Person, contentDescription = "Profile")
                                 else -> {}
                             }
                         },
@@ -178,7 +186,12 @@ fun MainAppScreen(username: String) {
                     attendanceStatus = attendanceStatus,
                     isClockedIn = isClockedIn,
                     isClockedOut = isClockedOut,
-                    history = attendanceHistory
+                    history = attendanceHistory,
+                    onSyncStatus = { status, clockedIn, clockedOut ->
+                        attendanceStatus = status
+                        isClockedIn = clockedIn
+                        isClockedOut = clockedOut
+                    }
                 )
             }
             composable(
@@ -268,8 +281,95 @@ fun HomeScreenContent(
     attendanceStatus: String,
     isClockedIn: Boolean,
     isClockedOut: Boolean,
-    history: List<AttendanceRecord>
+    history: MutableList<AttendanceRecord>,
+    onSyncStatus: (status: String, clockedIn: Boolean, clockedOut: Boolean) -> Unit
 ) {
+    val context = LocalContext.current
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        if (history.isEmpty()) {
+            val url = "http://202.138.248.93:10084/api/uhistori"
+            val requestQueue = Volley.newRequestQueue(context)
+
+            val jsonObjectRequest = object : JsonObjectRequest(
+                Request.Method.GET, url, null,
+                { response ->
+                    try {
+                        isLoading = false
+                        val historyArray = response.getJSONArray("history")
+                        val records = mutableListOf<AttendanceRecord>()
+                        for (i in 0 until historyArray.length()) {
+                            val item = historyArray.getJSONObject(i)
+                            fun formatDate(dateString: String): String {
+                                val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
+                                inputFormat.timeZone = TimeZone.getTimeZone("UTC")
+                                val outputFormat = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID"))
+                                return try {
+                                    inputFormat.parse(dateString)?.let { outputFormat.format(it) } ?: dateString
+                                } catch (e: Exception) { dateString }
+                            }
+                            fun formatDay(dateString: String): String {
+                                val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
+                                inputFormat.timeZone = TimeZone.getTimeZone("UTC")
+                                val outputFormat = SimpleDateFormat("E", Locale("id", "ID"))
+                                return try {
+                                    inputFormat.parse(dateString)?.let { outputFormat.format(it) } ?: ""
+                                } catch (e: Exception) { "" }
+                            }
+                            records.add(
+                                AttendanceRecord(
+                                    date = formatDate(item.getString("tgl_absen")),
+                                    day = formatDay(item.getString("tgl_absen")),
+                                    clockIn = item.getString("jam_masuk"),
+                                    clockOut = item.optString("jam_keluar", "--:--:--"),
+                                    isLate = false
+                                )
+                            )
+                        }
+                        history.clear()
+                        history.addAll(records)
+
+                        val todayDateString = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date())
+                        val latestRecord = history.firstOrNull()
+
+                        if (latestRecord != null && latestRecord.date == todayDateString) {
+                            if (latestRecord.clockOut != "--:--:--") {
+                                onSyncStatus("Anda sudah absen hari ini.", true, true)
+                            } else {
+                                onSyncStatus("Hadir - Masuk pukul ${latestRecord.clockIn}", true, false)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        errorMessage = "Gagal memproses data: ${e.message}"
+                        isLoading = false
+                    }
+                },
+                { error ->
+                    isLoading = false
+                    errorMessage = error.networkResponse?.let {
+                        val errorData = String(it.data, Charsets.UTF_8)
+                        "Error ${it.statusCode}: $errorData"
+                    } ?: "Error: ${error.message}"
+                }) {
+
+                override fun getHeaders(): MutableMap<String, String> {
+                    val headers = HashMap<String, String>()
+                    val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+                    val token = sharedPreferences.getString("jwt_token", null)
+                    if (token != null) {
+                        headers["Authorization"] = "Bearer $token"
+                    }
+                    return headers
+                }
+            }
+            requestQueue.add(jsonObjectRequest)
+        } else {
+            isLoading = false
+        }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -285,18 +385,33 @@ fun HomeScreenContent(
         }
         item {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(imageVector = Icons.Default.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.onBackground)
+                Icon(imageVector = Icons.Filled.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.onBackground)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Attendance History", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
             }
             Spacer(modifier = Modifier.height(16.dp))
         }
-        items(history) { record ->
-            HistoryItem(record = record)
-            Spacer(modifier = Modifier.height(12.dp))
+
+        when {
+            isLoading -> {
+                item { Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+            }
+            errorMessage != null -> {
+                item { Text(text = "Gagal memuat riwayat:\n$errorMessage", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center) }
+            }
+            history.isEmpty() -> {
+                item { Text(text = "Belum ada riwayat absensi.", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center) }
+            }
+            else -> {
+                items(history) { record ->
+                    HistoryItem(record = record)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+            }
         }
     }
 }
+
 
 @Composable
 fun ClockSection(
@@ -480,14 +595,8 @@ fun ConfirmationScreen(
             Button(
                 onClick = {
                     isSubmitting = true
-                    if (currentLocation == null) {
-                        Toast.makeText(context, "Gagal mendapatkan lokasi. Pastikan GPS aktif.", Toast.LENGTH_LONG).show()
-                        isSubmitting = false
-                        return@Button
-                    }
-
                     val requestQueue = Volley.newRequestQueue(context)
-                    val url = "http://202.138.248.93:10084/api/absensi" // GANTI DENGAN IP ANDA
+                    val url = "http://202.138.248.93:10084/api/absensi"
 
                     val stringRequest = object : StringRequest(
                         Method.POST, url,
@@ -623,7 +732,7 @@ fun LemburScreen(
             item {
                 Spacer(modifier = Modifier.height(32.dp))
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = Icons.Default.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.onBackground)
+                    Icon(imageVector = Icons.Filled.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.onBackground)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Riwayat Lembur", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
                 }
@@ -652,13 +761,13 @@ fun FilePickerBox(fileName: String?, onClick: () -> Unit) {
     ) {
         if (fileName == null) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(imageVector = Icons.Default.CloudUpload, contentDescription = "Upload Icon", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(48.dp))
+                Icon(imageVector = Icons.Filled.CloudUpload, contentDescription = "Upload Icon", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(48.dp))
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("Klik untuk memilih file SPL\n(Gambar atau PDF)", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center)
             }
         } else {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(imageVector = Icons.Default.InsertDriveFile, contentDescription = "File Icon", tint = Color(0xFF2ECC71), modifier = Modifier.size(48.dp))
+                Icon(imageVector = Icons.Filled.InsertDriveFile, contentDescription = "File Icon", tint = Color(0xFF2ECC71), modifier = Modifier.size(48.dp))
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("File Terpilih:", color = MaterialTheme.colorScheme.secondary)
                 Text(
@@ -706,7 +815,7 @@ fun UserHeader(username: String) {
         }
         Spacer(modifier = Modifier.weight(1f))
         IconButton(onClick = { (context as? Activity)?.finish() }) {
-            Icon(imageVector = Icons.AutoMirrored.Default.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.secondary)
+            Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.secondary)
         }
     }
 }
@@ -718,16 +827,37 @@ fun HistoryItem(record: AttendanceRecord) {
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text(record.day, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onBackground)
-                Text(record.date, fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary)
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.CalendarToday,
+                contentDescription = "Tanggal",
+                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.size(32.dp)
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "${record.day}, ${record.date}",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "${record.clockIn} - ${record.clockOut}",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.secondary
+                )
             }
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                text = "${record.clockIn} - ${record.clockOut}",
-                color = if (record.isLate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Bold
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (record.isLate) MaterialTheme.colorScheme.primary else Color(0xFF2ECC71)
+                    )
             )
         }
     }
