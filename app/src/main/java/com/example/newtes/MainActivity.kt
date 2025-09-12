@@ -29,7 +29,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.android.volley.Request
 import com.android.volley.toolbox.StringRequest
 import com.android.volley.toolbox.Volley
 import com.example.newtes.ui.theme.NewTesTheme
@@ -47,14 +46,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             NewTesTheme {
-                SitekadLandingScreen()
+                SitekadAuthScreen()
             }
         }
     }
 }
 
 @Composable
-fun SitekadLandingScreen() {
+fun SitekadAuthScreen() {
     var authState by remember { mutableStateOf(AuthState.WELCOME) }
 
     Surface(
@@ -100,7 +99,8 @@ fun SitekadLandingScreen() {
                         onBackClick = { authState = AuthState.WELCOME }
                     )
                     AuthState.REGISTER -> RegisterForm(
-                        onBackClick = { authState = AuthState.WELCOME }
+                        onBackClick = { authState = AuthState.WELCOME },
+                        onRegisterSuccess = { authState = AuthState.LOGIN } // Pindah ke login setelah sukses
                     )
                 }
             }
@@ -139,68 +139,97 @@ fun sitekadTextFieldColors() = TextFieldDefaults.colors(
     unfocusedIndicatorColor = MaterialTheme.colorScheme.secondary
 )
 
+// Di dalam file MainActivity.kt
+
 @Composable
 fun LoginForm(onBackClick: () -> Unit) {
-    var username by remember { mutableStateOf("Dapensi") } // Contoh isi
-    var password by remember { mutableStateOf("Dtu123") } // Contoh isi
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
     val context = LocalContext.current
     var isLoading by remember { mutableStateOf(false) }
 
     val requestQueue = remember { Volley.newRequestQueue(context) }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = sitekadTextFieldColors())
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it },
+            label = { Text("Username") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            colors = sitekadTextFieldColors()
+        )
         Spacer(modifier = Modifier.height(8.dp))
-        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), colors = sitekadTextFieldColors())
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Password") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            colors = sitekadTextFieldColors()
+        )
         Spacer(modifier = Modifier.height(24.dp))
         Button(
             onClick = {
                 isLoading = true
-                val url = "http://192.168.6.55:8080/login" // GANTI DENGAN IP ANDA
+                // GANTI DENGAN IP ANDA & PORT LOGIN
+                val url = "http://202.138.248.93:10084/login"
 
                 val stringRequest = object : StringRequest(
                     Method.POST, url,
-                    { response -> // Jika SUKSES
+                    { response ->
                         isLoading = false
-                        Toast.makeText(context, "Login Berhasil!", Toast.LENGTH_SHORT).show()
 
-                        val jwtToken = response
+                        try {
+                            // 1. "Bongkar" String JSON menjadi sebuah objek
+                            val jsonObject = JSONObject(response)
 
-                        val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
-                        with(sharedPreferences.edit()) {
-                            putString("jwt_token", jwtToken)
-                            apply()
+                            // 2. Ambil HANYA nilai dari kunci "token"
+                            val jwtToken = jsonObject.getString("token")
+
+                            Toast.makeText(context, "Login Berhasil!", Toast.LENGTH_SHORT).show()
+
+                            // 3. Simpan HANYA tokennya yang sudah bersih
+                            val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+                            with(sharedPreferences.edit()) {
+                                putString("jwt_token", jwtToken)
+                                apply()
+                            }
+
+                            // 4. Pindah ke Halaman Home
+                            val intent = Intent(context, HomeActivity::class.java)
+                            intent.putExtra("EXTRA_USERNAME", username)
+                            context.startActivity(intent)
+
+                        } catch (e: Exception) {
+                            // Jika format JSON dari server tidak sesuai dugaan
+                            isLoading = false
+                            Toast.makeText(context, "Gagal memproses data dari server", Toast.LENGTH_LONG).show()
+                            Log.e("LOGIN_API", "JSON Parsing Error: ${e.message}")
                         }
-
-                        val intent = Intent(context, HomeActivity::class.java)
-                        intent.putExtra("EXTRA_USERNAME", username)
-                        context.startActivity(intent)
                     },
                     { error -> // Jika GAGAL
                         isLoading = false
                         val errorMessage = error.networkResponse?.let {
-                            String(it.data)
+                            String(it.data, Charsets.UTF_8)
                         } ?: "Login Gagal: ${error.message}"
 
                         Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
                         Log.e("LOGIN_API", "Error: ${error.toString()}")
                     }) {
 
-                    // --- PERUBAHAN UTAMA ADA DI SINI ---
-                    // 1. Kita beritahu server bahwa kita mengirim JSON
                     override fun getBodyContentType(): String {
                         return "application/json; charset=utf-8"
                     }
 
-                    // 2. Kita buat sendiri body request dalam format JSON
                     override fun getBody(): ByteArray {
                         val jsonBody = JSONObject()
                         jsonBody.put("username", username)
                         jsonBody.put("password", password)
                         return jsonBody.toString().toByteArray(Charsets.UTF_8)
                     }
-
-                    // getParams() tidak lagi digunakan, karena kita sudah pakai getBody()
                 }
 
                 requestQueue.add(stringRequest)
@@ -222,10 +251,15 @@ fun LoginForm(onBackClick: () -> Unit) {
     }
 }
 @Composable
-fun RegisterForm(onBackClick: () -> Unit) {
+fun RegisterForm(onBackClick: () -> Unit, onRegisterSuccess: () -> Unit) {
     var fullname by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    var isLoading by remember { mutableStateOf(false) }
+
+    val requestQueue = remember { Volley.newRequestQueue(context) }
+
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         OutlinedTextField(value = fullname, onValueChange = { fullname = it }, label = { Text("NITAD") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = sitekadTextFieldColors())
         Spacer(modifier = Modifier.height(8.dp))
@@ -233,7 +267,48 @@ fun RegisterForm(onBackClick: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), colors = sitekadTextFieldColors())
         Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = { /* Logika registrasi nanti di sini */ }, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp)) { Text(text = "DAFTAR", fontWeight = FontWeight.Bold) }
+        Button(
+            onClick = {
+                isLoading = true
+                val url = "http://202.138.248.93:10084/aktivasi"
+
+                val stringRequest = object: StringRequest(
+                    Method.POST, url,
+                    { response ->
+                        isLoading = false
+                        Toast.makeText(context, "Registrasi Berhasil! Silakan Login.", Toast.LENGTH_LONG).show()
+                        onRegisterSuccess()
+                    },
+                    { error ->
+                        isLoading = false
+                        val errorMessage = error.networkResponse?.let { String(it.data) } ?: "Registrasi Gagal: ${error.message}"
+                        Toast.makeText(context, errorMessage, Toast.LENGTH_LONG).show()
+                        Log.e("REGISTER_API", "Error: ${error.toString()}")
+                    }) {
+                    override fun getBodyContentType(): String {
+                        return "application/json; charset=utf-8"
+                    }
+
+                    override fun getBody(): ByteArray {
+                        val jsonBody = JSONObject()
+                        jsonBody.put("NITAD", fullname)
+                        jsonBody.put("username", username)
+                        jsonBody.put("password", password)
+                        return jsonBody.toString().toByteArray(Charsets.UTF_8)
+                    }
+                }
+                requestQueue.add(stringRequest)
+            },
+            enabled = !isLoading,
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
+            } else {
+                Text(text = "DAFTAR", fontWeight = FontWeight.Bold)
+            }
+        }
         Spacer(modifier = Modifier.height(16.dp))
         TextButton(onClick = onBackClick) { Text(text = "Kembali", color = MaterialTheme.colorScheme.secondary) }
     }
@@ -241,8 +316,8 @@ fun RegisterForm(onBackClick: () -> Unit) {
 
 @Preview(showBackground = true)
 @Composable
-fun SitekadLandingScreenPreview() {
+fun SitekadAuthScreenPreview() {
     NewTesTheme {
-        SitekadLandingScreen()
+        SitekadAuthScreen()
     }
 }

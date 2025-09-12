@@ -8,7 +8,7 @@ import android.location.Location
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.util.Log
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +51,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage
+import com.android.volley.AuthFailureError
+import com.android.volley.toolbox.StringRequest
+import com.android.volley.toolbox.Volley
 import com.example.newtes.ui.theme.NewTesTheme
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
@@ -58,17 +62,12 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.*
-
-// --- DATA DUMMY ---
-const val OFFICE_LATITUDE = -6.898382687844024
-const val OFFICE_LONGITUDE = 107.63881370142434
-const val MAX_DISTANCE_METERS = 500.0
-const val CORRECT_QR_ID = "SITEKAD-GS-01"
 
 data class AttendanceRecord(
     val date: String, val day: String, val clockIn: String, val clockOut: String, val isLate: Boolean = false
@@ -315,12 +314,13 @@ fun ClockSection(
         contract = ScanContract(),
         onResult = { result ->
             if (result.contents != null) {
+                val idLokasi = result.contents
                 val type = if (!isClockedIn) {
                     if (isLembur) "in-lembur" else "in"
                 } else {
                     if (isLembur) "out-lembur" else "out"
                 }
-                navController.navigate(Screen.ConfirmAttendance.createRoute(result.contents, type))
+                navController.navigate(Screen.ConfirmAttendance.createRoute(idLokasi, type))
             } else {
                 Toast.makeText(context, "Scan Dibatalkan", Toast.LENGTH_SHORT).show()
             }
@@ -393,6 +393,7 @@ fun ConfirmationScreen(
     val context = LocalContext.current
     var currentLocation by remember { mutableStateOf<Location?>(null) }
     var locationFetchStatus by remember { mutableStateOf("Meminta izin lokasi...") }
+    var isSubmitting by remember { mutableStateOf(false) }
     val timeNow = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
     val dateNow = SimpleDateFormat("EEEE, dd MMMM yyyy", Locale("id", "ID")).format(Date())
 
@@ -478,31 +479,54 @@ fun ConfirmationScreen(
             Spacer(modifier = Modifier.height(48.dp))
             Button(
                 onClick = {
+                    isSubmitting = true
                     if (currentLocation == null) {
                         Toast.makeText(context, "Gagal mendapatkan lokasi. Pastikan GPS aktif.", Toast.LENGTH_LONG).show()
+                        isSubmitting = false
                         return@Button
                     }
-                    if (qrCodeId != CORRECT_QR_ID) {
-                        Toast.makeText(context, "Gagal: QR Code lokasi tidak valid!", Toast.LENGTH_LONG).show()
-                        return@Button
+
+                    val requestQueue = Volley.newRequestQueue(context)
+                    val url = "http://202.138.248.93:10084/api/absensi" // GANTI DENGAN IP ANDA
+
+                    val stringRequest = object : StringRequest(
+                        Method.POST, url,
+                        { response ->
+                            isSubmitting = false
+                            Toast.makeText(context, "Absen Berhasil: $response", Toast.LENGTH_SHORT).show()
+                            onConfirm(timeNow, qrCodeId)
+                        },
+                        { error ->
+                            isSubmitting = false
+                            val errorMessage = error.networkResponse?.let { String(it.data, Charsets.UTF_8) } ?: "Error: ${error.message}"
+                            Toast.makeText(context, "Gagal mengirim absen: $errorMessage", Toast.LENGTH_LONG).show()
+                        }) {
+
+                        override fun getHeaders(): MutableMap<String, String> {
+                            val headers = HashMap<String, String>()
+                            val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+                            val token = sharedPreferences.getString("jwt_token", "")
+                            headers["Authorization"] = "Bearer $token"
+                            return headers
+                        }
+
+                        override fun getBodyContentType() = "application/json; charset=utf-8"
+                        override fun getBody(): ByteArray {
+                            val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+                            val jsonBody = JSONObject()
+                            jsonBody.put("latitude", currentLocation!!.latitude)
+                            jsonBody.put("longitude", currentLocation!!.longitude)
+                            jsonBody.put("android_id", androidId)
+                            jsonBody.put("kodeqr", qrCodeId)
+                            return jsonBody.toString().toByteArray(Charsets.UTF_8)
+                        }
                     }
-                    val distanceResults = FloatArray(1)
-                    Location.distanceBetween(
-                        currentLocation!!.latitude, currentLocation!!.longitude,
-                        OFFICE_LATITUDE, OFFICE_LONGITUDE,
-                        distanceResults
-                    )
-                    val distanceInMeters = distanceResults[0]
-                    if (distanceInMeters <= MAX_DISTANCE_METERS) {
-                        onConfirm(timeNow, qrCodeId)
-                    } else {
-                        Toast.makeText(context, "Gagal: Anda berada terlalu jauh dari kantor! (Jarak: ${distanceInMeters.toInt()} meter)", Toast.LENGTH_LONG).show()
-                    }
+                    requestQueue.add(stringRequest)
                 },
-                enabled = currentLocation != null,
+                enabled = currentLocation != null && !isSubmitting,
                 modifier = Modifier.fillMaxWidth().height(50.dp)
             ) {
-                if (currentLocation == null) {
+                if (isSubmitting || currentLocation == null) {
                     CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
                 } else {
                     Text("Kirim Absen", fontSize = 18.sp)
@@ -513,7 +537,6 @@ fun ConfirmationScreen(
         }
     }
 }
-
 
 @Composable
 fun LemburScreen(
@@ -683,7 +706,7 @@ fun UserHeader(username: String) {
         }
         Spacer(modifier = Modifier.weight(1f))
         IconButton(onClick = { (context as? Activity)?.finish() }) {
-            Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.secondary)
+            Icon(imageVector = Icons.AutoMirrored.Default.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.secondary)
         }
     }
 }
