@@ -12,6 +12,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn // <-- Diganti dari Column
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -29,11 +30,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.android.volley.Request
 import com.android.volley.toolbox.StringRequest
 import com.android.volley.toolbox.Volley
 import com.example.newtes.ui.theme.NewTesTheme
 import org.json.JSONObject
-
 // Enum untuk menentukan state tampilan
 enum class AuthState {
     WELCOME,
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun SitekadAuthScreen() {
     var authState by remember { mutableStateOf(AuthState.WELCOME) }
@@ -60,49 +62,52 @@ fun SitekadAuthScreen() {
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
-        Column(
+        // --- PERUBAHAN UTAMA: MENGGUNAKAN LazyColumn ---
+        // LazyColumn secara alami mendukung scroll, yang akan aktif saat keyboard muncul
+        // dan mendorong konten ke atas.
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 32.dp, vertical = 48.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(horizontal = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
             // Bagian atas (Logo dan Judul)
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.weight(1f)
-            ) {
-                Spacer(modifier = Modifier.height(64.dp))
-                Image(
-                    painter = painterResource(id = R.drawable.logo),
-                    contentDescription = "Logo SITEKAD",
-                    modifier = Modifier.size(120.dp),
-                    contentScale = ContentScale.Fit
-                )
-                Spacer(modifier = Modifier.height(24.dp))
-                Text(text = "SITEKAD", fontSize = 42.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = "Sistem Informasi Tenaga Kerja Ahli Daya", fontSize = 16.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f), textAlign = TextAlign.Center)
+            item {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillParentMaxHeight(0.5f) // Mengisi 50% ruang atas
+                        .padding(top = 48.dp),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Image(painter = painterResource(id = R.drawable.logo), contentDescription = "Logo SITEKAD", modifier = Modifier.size(120.dp), contentScale = ContentScale.Fit)
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text(text = "SITEKAD", fontSize = 42.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(text = "Sistem Informasi Tenaga Kerja Ahli Daya", fontSize = 16.sp, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f), textAlign = TextAlign.Center)
+                }
             }
 
             // Bagian bawah dinamis
-            AnimatedContent(
-                targetState = authState,
-                transitionSpec = { fadeIn(animationSpec = tween(300)) togetherWith fadeOut(animationSpec = tween(300)) },
-                label = "Auth Form Animation"
-            ) { state ->
-                when (state) {
-                    AuthState.WELCOME -> WelcomeButtons(
-                        onLoginClick = { authState = AuthState.LOGIN },
-                        onRegisterClick = { authState = AuthState.REGISTER }
-                    )
-                    AuthState.LOGIN -> LoginForm(
-                        onBackClick = { authState = AuthState.WELCOME }
-                    )
-                    AuthState.REGISTER -> RegisterForm(
-                        onBackClick = { authState = AuthState.WELCOME },
-                        onRegisterSuccess = { authState = AuthState.LOGIN } // Pindah ke login setelah sukses
-                    )
+            item {
+                AnimatedContent(
+                    targetState = authState,
+                    transitionSpec = { fadeIn(animationSpec = tween(300)) togetherWith fadeOut(animationSpec = tween(300)) },
+                    label = "Auth Form Animation"
+                ) { state ->
+                    when (state) {
+                        AuthState.WELCOME -> WelcomeButtons(
+                            onLoginClick = { authState = AuthState.LOGIN },
+                            onRegisterClick = { authState = AuthState.REGISTER }
+                        )
+                        AuthState.LOGIN -> LoginForm(onBackClick = { authState = AuthState.WELCOME })
+                        AuthState.REGISTER -> RegisterForm(
+                            onBackClick = { authState = AuthState.WELCOME },
+                            onRegisterSuccess = { authState = AuthState.LOGIN }
+                        )
+                    }
                 }
+                Spacer(modifier = Modifier.height(48.dp))
             }
         }
     }

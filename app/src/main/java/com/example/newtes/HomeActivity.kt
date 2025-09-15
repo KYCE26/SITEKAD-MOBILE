@@ -121,6 +121,8 @@ fun MainAppScreen(username: String) {
     val context = LocalContext.current
     val activity = (context as? Activity)
 
+    val userProfile = remember { mutableStateOf<UserProfile?>(null) }
+
     // --- STATE UTAMA ABSEN REGULER ---
     val attendanceStatus = rememberSaveable { mutableStateOf("Belum Absen Hari Ini") }
     val isClockedIn = rememberSaveable { mutableStateOf(false) }
@@ -142,6 +144,39 @@ fun MainAppScreen(username: String) {
     val bottomNavItems = listOf(
         Screen.Home, Screen.Lembur, Screen.Profile
     )
+
+    LaunchedEffect(Unit) {
+        val url = "http://202.138.248.93:10084/api/profile"
+        val requestQueue = Volley.newRequestQueue(context)
+        val jsonObjectRequest = object : JsonObjectRequest(
+            Request.Method.GET, url, null,
+            { response ->
+                try {
+                    val profileJson = response.getJSONObject("profile")
+                    userProfile.value = UserProfile(
+                        username = profileJson.getString("Username"),
+                        nitad = profileJson.getString("NITAD"),
+                        namaLengkap = profileJson.getString("Nama Lengkap"),
+                        jabatan = profileJson.getString("Jabatan"),
+                        cabang = profileJson.getString("Cabang"),
+                        lokasi = profileJson.getString("Lokasi")
+                    )
+                } catch (e: Exception) {
+                    Log.e("ProfileAPI", "Gagal parsing profil: ${e.message}")
+                }
+            },
+            { error -> Log.e("ProfileAPI", "Gagal mengambil profil: ${error.message}") }
+        ) {
+            override fun getHeaders(): MutableMap<String, String> {
+                val headers = HashMap<String, String>()
+                val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+                val token = sharedPreferences.getString("jwt_token", null)
+                headers["Authorization"] = "Bearer $token"
+                return headers
+            }
+        }
+        requestQueue.add(jsonObjectRequest)
+    }
 
     fun doLogout() {
         val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
@@ -212,7 +247,7 @@ fun MainAppScreen(username: String) {
         ) {
             composable(Screen.Home.route) {
                 HomeScreenContent(
-                    username = username,
+                    userProfile = userProfile.value,
                     navController = navController,
                     attendanceStatus = attendanceStatus,
                     isClockedIn = isClockedIn,
@@ -279,7 +314,7 @@ fun MainAppScreen(username: String) {
             }
             composable(Screen.Lembur.route) {
                 LemburScreen(
-                    username = username,
+                    userProfile = userProfile.value,
                     navController = navController,
                     lemburStatus = lemburStatus.value,
                     isLemburClockedIn = isLemburClockedIn.value,
@@ -297,7 +332,10 @@ fun MainAppScreen(username: String) {
                 )
             }
             composable(Screen.Profile.route) {
-                ProfileScreen(onLogoutClick = { doLogout() })
+                ProfileScreen(
+                    userProfile = userProfile.value,
+                    onLogoutClick = { doLogout() }
+                )
             }
         }
     }
@@ -306,7 +344,7 @@ fun MainAppScreen(username: String) {
 
 @Composable
 fun HomeScreenContent(
-    username: String,
+    userProfile: UserProfile?,
     navController: NavHostController,
     attendanceStatus: MutableState<String>,
     isClockedIn: MutableState<Boolean>,
@@ -408,7 +446,7 @@ fun HomeScreenContent(
     ) {
         item {
             Spacer(modifier = Modifier.height(16.dp))
-            UserHeader(username = username, onLogoutClick = onLogoutClick)
+            UserHeader(userProfile = userProfile, onLogoutClick = onLogoutClick)
             Spacer(modifier = Modifier.height(32.dp))
         }
         item {
@@ -683,7 +721,7 @@ fun ConfirmationScreen(
 
 @Composable
 fun LemburScreen(
-    username: String,
+    userProfile: UserProfile?,
     navController: NavHostController,
     lemburStatus: String,
     isLemburClockedIn: Boolean,
@@ -714,7 +752,7 @@ fun LemburScreen(
     ) {
         item {
             Spacer(modifier = Modifier.height(16.dp))
-            UserHeader(username = username, onLogoutClick = onLogoutClick)
+            UserHeader(userProfile = userProfile, onLogoutClick = onLogoutClick)
             Spacer(modifier = Modifier.height(32.dp))
             Text("Pengajuan Lembur", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
@@ -838,16 +876,26 @@ fun PlaceholderScreen(text: String) {
 }
 
 @Composable
-fun UserHeader(username: String, onLogoutClick: () -> Unit) {
+fun UserHeader(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Image(painter = painterResource(id = R.drawable.logo), contentDescription = "User Avatar", modifier = Modifier.size(50.dp).clip(CircleShape))
         Spacer(modifier = Modifier.width(12.dp))
         Column {
-            Text(text = username, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = MaterialTheme.colorScheme.onBackground)
-            Text(text = "27738749 - Senior UX Designer", fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary)
+            Text(
+                text = userProfile?.namaLengkap ?: "Memuat...", // Tampilkan nama lengkap
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            // Tampilkan NITAD dan Jabatan
+            Text(
+                text = "${userProfile?.nitad ?: ""} - ${userProfile?.jabatan ?: ""}",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.secondary
+            )
         }
         Spacer(modifier = Modifier.weight(1f))
-        IconButton(onClick = onLogoutClick) { // Panggil callback saat di-klik
+        IconButton(onClick = onLogoutClick) {
             Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.secondary)
         }
     }
@@ -899,148 +947,52 @@ fun HistoryItem(record: AttendanceRecord) {
 // Di dalam file HomeActivity.kt
 
 @Composable
-fun ProfileScreen(onLogoutClick: () -> Unit) {
+fun ProfileScreen(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
     val context = LocalContext.current
-    val activity = (LocalContext.current as? Activity) // Untuk menutup activity
-
-    // State untuk menampung data profil dari API
-    var userProfile by remember { mutableStateOf<UserProfile?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    // State untuk proses logout
     var isLoggingOut by remember { mutableStateOf(false) }
 
-    // Mengambil data profil saat layar pertama kali dibuka
-    LaunchedEffect(Unit) {
-        val url = "http://202.138.248.93:10084/api/profile"
-        val requestQueue = Volley.newRequestQueue(context)
-
-        val jsonObjectRequest = object : JsonObjectRequest(
-            Request.Method.GET, url, null,
-            { response ->
-                try {
-                    val profileJson = response.getJSONObject("profile")
-                    userProfile = UserProfile(
-                        username = profileJson.getString("Username"),
-                        nitad = profileJson.getString("NITAD"),
-                        namaLengkap = profileJson.getString("Nama Lengkap"),
-                        jabatan = profileJson.getString("Jabatan"),
-                        cabang = profileJson.getString("Cabang"),
-                        lokasi = profileJson.getString("Lokasi")
-                    )
-                    isLoading = false
-                } catch (e: Exception) {
-                    errorMessage = "Gagal memproses data profil."
-                    isLoading = false
-                }
-            },
-            { error ->
-                isLoading = false
-                errorMessage = "Gagal mengambil data profil: ${error.message}"
-            }) {
-
-            override fun getHeaders(): MutableMap<String, String> {
-                val headers = HashMap<String, String>()
-                val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
-                val token = sharedPreferences.getString("jwt_token", null)
-                headers["Authorization"] = "Bearer $token"
-                return headers
-            }
-        }
-        requestQueue.add(jsonObjectRequest)
-    }
+    // Hapus LaunchedEffect dari sini karena data sudah diambil di MainAppScreen
 
     Surface(modifier = Modifier.fillMaxSize()) {
-        if (isLoading) {
+        if (userProfile == null) { // Tampilkan loading jika userProfile masih null
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
-        } else if (errorMessage != null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(text = errorMessage!!, color = MaterialTheme.colorScheme.error)
-            }
-        } else if (userProfile != null) {
+        } else {
+            // Tampilan jika data berhasil dimuat
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
+                modifier = Modifier.fillMaxSize().padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // --- Bagian Header Profil --- (tidak berubah)
+                // --- Bagian Header Profil ---
                 Spacer(modifier = Modifier.height(32.dp))
                 Image(
                     painter = painterResource(id = R.drawable.logo),
                     contentDescription = "User Avatar",
-                    modifier = Modifier
-                        .size(120.dp)
-                        .clip(CircleShape)
-                        .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    modifier = Modifier.size(120.dp).clip(CircleShape).border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = userProfile!!.namaLengkap,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "NITAD: ${userProfile!!.nitad}",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.secondary
-                )
+                Text(text = userProfile.namaLengkap, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(text = "NITAD: ${userProfile.nitad}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.secondary)
                 Spacer(modifier = Modifier.height(32.dp))
 
-                // --- Bagian Detail Informasi --- (tidak berubah)
+                // --- Bagian Detail Informasi ---
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    ProfileInfoItem(icon = Icons.Filled.Work, label = "Jabatan", value = userProfile!!.jabatan)
-                    ProfileInfoItem(icon = Icons.Filled.Business, label = "Cabang", value = userProfile!!.cabang)
-                    ProfileInfoItem(icon = Icons.Filled.LocationOn, label = "Lokasi", value = userProfile!!.lokasi)
+                    ProfileInfoItem(icon = Icons.Filled.Work, label = "Jabatan", value = userProfile.jabatan)
+                    ProfileInfoItem(icon = Icons.Filled.Business, label = "Cabang", value = userProfile.cabang)
+                    ProfileInfoItem(icon = Icons.Filled.LocationOn, label = "Lokasi", value = userProfile.lokasi)
                 }
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                // --- Tombol Logout dengan Logika Baru ---
+                // --- Tombol Logout ---
                 Button(
                     onClick = {
                         isLoggingOut = true
-                        val logoutUrl = "http://202.138.248.93:10084/logout"
-                        val requestQueue = Volley.newRequestQueue(context)
-
-                        val logoutRequest = object: JsonObjectRequest(
-                            Method.GET, logoutUrl, null,
-                            { response ->
-                                // Apapun respons server, kita tetap logout
-                                Toast.makeText(context, "Logout Berhasil!", Toast.LENGTH_SHORT).show()
-                            },
-                            { error ->
-                                // Jika API gagal pun, kita anggap logout berhasil di sisi klien
-                                Log.e("LOGOUT_API", "Logout API error: ${error.message}")
-                            }
-                        ) {
-                            override fun getHeaders(): MutableMap<String, String> {
-                                val headers = HashMap<String, String>()
-                                val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
-                                val token = sharedPreferences.getString("jwt_token", null)
-                                headers["Authorization"] = "Bearer $token"
-                                return headers
-                            }
-                        }
-
-                        // HAPUS DATA LOKAL & KEMBALI KE LOGIN
-                        val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
-                        sharedPreferences.edit().clear().apply() // Hapus semua data (termasuk token)
-
-                        // Buat Intent untuk kembali ke MainActivity
-                        val intent = Intent(context, MainActivity::class.java)
-                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                        context.startActivity(intent)
-                        activity?.finish() // Tutup HomeActivity
-
-                        requestQueue.add(logoutRequest) // Jalankan request API (opsional, bisa dibuang jika tidak perlu)
+                        onLogoutClick()
                     },
                     enabled = !isLoggingOut,
-                    modifier = Modifier.fillMaxWidth().height(50.dp),
-                    //colors = ButtonDefaults.buttonColors( containerColor = MaterialTheme.colorScheme.error // Gunakan warna error untuk aksi destruktif)
+                    modifier = Modifier.fillMaxWidth().height(50.dp)
                 ) {
                     if (isLoggingOut) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
