@@ -1,3 +1,5 @@
+// --- GANTI SELURUH BLOK IMPORT ANDA DENGAN INI ---
+
 package com.example.newtes // Sesuaikan dengan package name Anda
 
 import android.Manifest
@@ -39,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -46,7 +49,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -321,6 +326,7 @@ fun MainAppScreen(username: String) {
                     isLemburClockedOut = isLemburClockedOut.value,
                     history = lemburHistory,
                     fileName = fileName.value,
+                    fileUriString = fileUriString.value,
                     isSplSubmitted = isSplSubmitted.value,
                     onFileSelected = { uri ->
                         fileUriString.value = uri.toString()
@@ -328,7 +334,12 @@ fun MainAppScreen(username: String) {
                         isSplSubmitted.value = false
                     },
                     onSplSubmit = { isSplSubmitted.value = true },
-                    onLogoutClick = { doLogout() }
+                    onLogoutClick = { doLogout() },
+                    onClearFile = {
+                        fileUriString.value = null
+                        fileName.value = null
+                        isSplSubmitted.value = false
+                    }
                 )
             }
             composable(Screen.Profile.route) {
@@ -728,16 +739,22 @@ fun LemburScreen(
     isLemburClockedOut: Boolean,
     history: List<AttendanceRecord>,
     fileName: String?,
+    fileUriString: String?,
     isSplSubmitted: Boolean,
     onFileSelected: (Uri) -> Unit,
     onSplSubmit: () -> Unit,
-    onLogoutClick: () -> Unit
+    onLogoutClick: () -> Unit,
+    onClearFile: () -> Unit
 ) {
     var isUploading by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val fileUri = fileUriString?.toUri()
 
-    val filePickerLauncher = rememberLauncherForActivityResult(
+    // --- STATE BARU UNTUK DIALOG PREVIEW ---
+    var showImagePreviewDialog by remember { mutableStateOf(false) }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
         onResult = { uri: Uri? ->
             uri?.let {
@@ -745,6 +762,20 @@ fun LemburScreen(
             }
         }
     )
+
+    // --- DIALOG UNTUK MENAMPILKAN GAMBAR UKURAN PENUH ---
+    if (showImagePreviewDialog && fileUri != null) {
+        Dialog(onDismissRequest = { showImagePreviewDialog = false }) {
+            Card(shape = RoundedCornerShape(16.dp)) {
+                AsyncImage(
+                    model = fileUri,
+                    contentDescription = "Full Screen Preview",
+                    modifier = Modifier.fillMaxWidth(),
+                    contentScale = ContentScale.Fit
+                )
+            }
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
@@ -761,10 +792,22 @@ fun LemburScreen(
         item {
             Text("1. Upload Surat Perintah Lembur (SPL)", style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(16.dp))
-            FilePickerBox(fileName = fileName, onClick = { if (!isUploading) filePickerLauncher.launch("*/*") })
-        }
+            FilePickerBox(
+                fileUri = fileUri,
+                onClick = {
+                    if (fileUri == null) {
+                        imagePickerLauncher.launch("image/*") // Jika kosong, buka galeri
+                    } else {
+                        showImagePreviewDialog = true // Jika terisi, buka dialog
+                    }
+                },
 
-        if (fileName != null && !isSplSubmitted) {
+                    onClearImage = onClearFile) // Kirim Uri kosong untuk mereset
+                }
+
+
+
+        if (fileUri != null && !isSplSubmitted) {
             item {
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
@@ -820,41 +863,50 @@ fun LemburScreen(
 }
 
 @Composable
-fun FilePickerBox(fileName: String?, onClick: () -> Unit) {
+fun FilePickerBox(
+    fileUri: Uri?,
+    onClick: () -> Unit,
+    onClearImage: () -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(150.dp)
+            .height(200.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick)
-            .padding(16.dp),
-        contentAlignment = Alignment.Center
+            .clickable(onClick = onClick) // Aksi klik utama (buka galeri/dialog)
     ) {
-        if (fileName == null) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        if (fileUri == null || fileUri.toString().isEmpty()) {
+            // Tampilan default jika belum ada gambar
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Icon(imageVector = Icons.Filled.CloudUpload, contentDescription = "Upload Icon", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(48.dp))
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Klik untuk memilih file SPL\n(Gambar atau PDF)", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center)
+                Text("Klik untuk memilih gambar SPL", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center)
             }
         } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(imageVector = Icons.Filled.InsertDriveFile, contentDescription = "File Icon", tint = Color(0xFF2ECC71), modifier = Modifier.size(48.dp))
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("File Terpilih:", color = MaterialTheme.colorScheme.secondary)
-                Text(
-                    text = fileName,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center
-                )
+            // Tampilan jika gambar sudah dipilih
+            AsyncImage(
+                model = fileUri,
+                contentDescription = "Preview SPL",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop // Crop agar memenuhi box
+            )
+            // Tombol Hapus (ikon 'X') di pojok kanan atas
+            IconButton(
+                onClick = onClearImage,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f), CircleShape)
+            ) {
+                Icon(imageVector = Icons.Default.Close, contentDescription = "Hapus Gambar", tint = MaterialTheme.colorScheme.onSurface)
             }
         }
     }
 }
-
 fun getFileName(context: Context, uri: Uri): String? {
     var fileName: String? = null
     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
