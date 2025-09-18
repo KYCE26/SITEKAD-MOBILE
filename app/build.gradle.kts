@@ -40,6 +40,10 @@ android {
 }
 
 dependencies {
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0") // Untuk handle JSON
+    implementation("com.squareup.okhttp3:okhttp:4.9.3")
+    implementation("com.github.kittinunf.fuel:fuel-android:2.3.1")
     implementation("com.android.volley:volley:1.2.1")
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("com.google.android.gms:play-services-location:21.2.0")

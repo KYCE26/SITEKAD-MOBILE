@@ -1,5 +1,3 @@
-// --- GANTI SELURUH BLOK IMPORT ANDA DENGAN INI ---
-
 package com.example.newtes // Sesuaikan dengan package name Anda
 
 import android.Manifest
@@ -18,9 +16,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,10 +41,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.navigation.NavHostController
@@ -60,7 +55,6 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage
-import com.android.volley.AuthFailureError
 import com.android.volley.Request
 import com.android.volley.toolbox.JsonObjectRequest
 import com.android.volley.toolbox.StringRequest
@@ -73,15 +67,15 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.*
-
-// --- DATA DUMMY (HANYA UNTUK VALIDASI FRONTEND) ---
-const val MAX_DISTANCE_METERS = 500.0
 
 data class UserProfile(
     val username: String = "...",
@@ -94,7 +88,10 @@ data class UserProfile(
 data class AttendanceRecord(
     val date: String, val day: String, val clockIn: String, val clockOut: String, val isLate: Boolean = false
 )
-
+data class LemburResponse(
+    val message: String,
+    val file_disimpan: String
+)
 sealed class Screen(val route: String) {
     object Home : Screen("home_main")
     object Lembur : Screen("lembur")
@@ -110,10 +107,9 @@ sealed class Screen(val route: String) {
 class HomeActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val username = intent.getStringExtra("EXTRA_USERNAME") ?: "Pengguna"
         setContent {
             NewTesTheme {
-                MainAppScreen(username = username)
+                MainAppScreen()
             }
         }
     }
@@ -121,34 +117,26 @@ class HomeActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainAppScreen(username: String) {
+fun MainAppScreen() {
     val navController = rememberNavController()
     val context = LocalContext.current
     val activity = (context as? Activity)
-
     val userProfile = remember { mutableStateOf<UserProfile?>(null) }
 
-    // --- STATE UTAMA ABSEN REGULER ---
     val attendanceStatus = rememberSaveable { mutableStateOf("Belum Absen Hari Ini") }
     val isClockedIn = rememberSaveable { mutableStateOf(false) }
     val isClockedOut = rememberSaveable { mutableStateOf(false) }
     val clockInTime = rememberSaveable { mutableStateOf("--:--") }
     val attendanceHistory = remember { mutableStateListOf<AttendanceRecord>() }
 
-    // --- STATE UTAMA ABSEN LEMBUR ---
     val lemburStatus = rememberSaveable { mutableStateOf("Belum Lembur Hari Ini") }
     val isLemburClockedIn = rememberSaveable { mutableStateOf(false) }
     val isLemburClockedOut = rememberSaveable { mutableStateOf(false) }
     val lemburClockInTime = rememberSaveable { mutableStateOf("--:--") }
     val lemburHistory = remember { mutableStateListOf<AttendanceRecord>() }
     val fileUriString = rememberSaveable { mutableStateOf<String?>(null) }
-    val fileName = rememberSaveable { mutableStateOf<String?>(null) }
-    val isSplSubmitted = rememberSaveable { mutableStateOf(false) }
 
-
-    val bottomNavItems = listOf(
-        Screen.Home, Screen.Lembur, Screen.Profile
-    )
+    val bottomNavItems = listOf(Screen.Home, Screen.Lembur, Screen.Profile)
 
     LaunchedEffect(Unit) {
         val url = "http://202.138.248.93:10084/api/profile"
@@ -185,23 +173,6 @@ fun MainAppScreen(username: String) {
 
     fun doLogout() {
         val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
-        val token = sharedPreferences.getString("jwt_token", null)
-        if (token != null) {
-            val logoutUrl = "http://202.138.248.93:10084/logout"
-            val requestQueue = Volley.newRequestQueue(context)
-            val logoutRequest = object: JsonObjectRequest(
-                Request.Method.GET, logoutUrl, null,
-                { _ -> Log.d("LOGOUT_API", "Logout API success") },
-                { error -> Log.e("LOGOUT_API", "Logout API error: ${error.message}") }
-            ) {
-                override fun getHeaders(): MutableMap<String, String> {
-                    val headers = HashMap<String, String>()
-                    headers["Authorization"] = "Bearer $token"
-                    return headers
-                }
-            }
-            requestQueue.add(logoutRequest)
-        }
         sharedPreferences.edit().clear().apply()
         val intent = Intent(context, MainActivity::class.java)
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -226,9 +197,9 @@ fun MainAppScreen(username: String) {
                         },
                         icon = {
                             when (item) {
-                                is Screen.Home -> Icon(Icons.Filled.Home, contentDescription = "Home")
-                                is Screen.Lembur -> Icon(Icons.Filled.Notifications, contentDescription = "Lembur")
-                                is Screen.Profile -> Icon(Icons.Filled.Person, contentDescription = "Profile")
+                                is Screen.Home -> Icon(Icons.Filled.Home, "Home")
+                                is Screen.Lembur -> Icon(Icons.Filled.Notifications, "Lembur")
+                                is Screen.Profile -> Icon(Icons.Filled.Person, "Profile")
                                 else -> {}
                             }
                         },
@@ -255,8 +226,8 @@ fun MainAppScreen(username: String) {
                     userProfile = userProfile.value,
                     navController = navController,
                     attendanceStatus = attendanceStatus,
-                    isClockedIn = isClockedIn,
-                    isClockedOut = isClockedOut,
+                    isClockedIn = isClockedIn.value,
+                    isClockedOut = isClockedOut.value,
                     history = attendanceHistory,
                     onLogoutClick = { doLogout() }
                 )
@@ -274,6 +245,7 @@ fun MainAppScreen(username: String) {
                     navController = navController,
                     qrCodeId = scanResult,
                     attendanceType = attendanceType,
+                    fileUriString = fileUriString.value,
                     onConfirm = { time, _ ->
                         when (attendanceType) {
                             "in" -> {
@@ -283,13 +255,7 @@ fun MainAppScreen(username: String) {
                                 clockInTime.value = time
                             }
                             "out" -> {
-                                val newRecord = AttendanceRecord(
-                                    date = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date()),
-                                    day = SimpleDateFormat("E", Locale("id", "ID")).format(Date()),
-                                    clockIn = clockInTime.value,
-                                    clockOut = time,
-                                    isLate = false
-                                )
+                                val newRecord = AttendanceRecord(SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date()), SimpleDateFormat("E", Locale("id", "ID")).format(Date()), clockInTime.value, time)
                                 attendanceHistory.add(0, newRecord)
                                 isClockedOut.value = true
                                 attendanceStatus.value = "Anda sudah absen hari ini."
@@ -299,15 +265,10 @@ fun MainAppScreen(username: String) {
                                 isLemburClockedIn.value = true
                                 isLemburClockedOut.value = false
                                 lemburClockInTime.value = time
+                                fileUriString.value = null
                             }
                             "out-lembur" -> {
-                                val newRecord = AttendanceRecord(
-                                    date = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date()),
-                                    day = SimpleDateFormat("E", Locale("id", "ID")).format(Date()),
-                                    clockIn = lemburClockInTime.value,
-                                    clockOut = time,
-                                    isLate = false
-                                )
+                                val newRecord = AttendanceRecord(SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date()), SimpleDateFormat("E", Locale("id", "ID")).format(Date()), lemburClockInTime.value, time)
                                 lemburHistory.add(0, newRecord)
                                 isLemburClockedOut.value = true
                                 lemburStatus.value = "Anda sudah selesai lembur hari ini."
@@ -325,41 +286,26 @@ fun MainAppScreen(username: String) {
                     isLemburClockedIn = isLemburClockedIn.value,
                     isLemburClockedOut = isLemburClockedOut.value,
                     history = lemburHistory,
-                    fileName = fileName.value,
                     fileUriString = fileUriString.value,
-                    isSplSubmitted = isSplSubmitted.value,
-                    onFileSelected = { uri ->
-                        fileUriString.value = uri.toString()
-                        fileName.value = getFileName(context, uri)
-                        isSplSubmitted.value = false
-                    },
-                    onSplSubmit = { isSplSubmitted.value = true },
+                    onFileSelected = { uri -> fileUriString.value = uri.toString() },
                     onLogoutClick = { doLogout() },
-                    onClearFile = {
-                        fileUriString.value = null
-                        fileName.value = null
-                        isSplSubmitted.value = false
-                    }
+                    onClearFile = { fileUriString.value = null }
                 )
             }
             composable(Screen.Profile.route) {
-                ProfileScreen(
-                    userProfile = userProfile.value,
-                    onLogoutClick = { doLogout() }
-                )
+                ProfileScreen(userProfile = userProfile.value, onLogoutClick = { doLogout() })
             }
         }
     }
 }
-
 
 @Composable
 fun HomeScreenContent(
     userProfile: UserProfile?,
     navController: NavHostController,
     attendanceStatus: MutableState<String>,
-    isClockedIn: MutableState<Boolean>,
-    isClockedOut: MutableState<Boolean>,
+    isClockedIn: Boolean,
+    isClockedOut: Boolean,
     history: MutableList<AttendanceRecord>,
     onLogoutClick: () -> Unit
 ) {
@@ -401,26 +347,20 @@ fun HomeScreenContent(
                                     date = formatDate(item.getString("tgl_absen")),
                                     day = formatDay(item.getString("tgl_absen")),
                                     clockIn = item.getString("jam_masuk"),
-                                    clockOut = item.optString("jam_keluar", "null"), // Ambil sebagai string "null" jika kosong
+                                    clockOut = item.optString("jam_keluar", "null"),
                                     isLate = false
                                 )
                             )
                         }
                         history.clear()
                         history.addAll(records)
-
                         val todayDateString = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date())
                         val latestRecord = history.firstOrNull()
-
                         if (latestRecord != null && latestRecord.date == todayDateString) {
-                            if (latestRecord.clockOut != "null") { // Cek apakah sudah clock out
+                            if (latestRecord.clockOut != "null") {
                                 attendanceStatus.value = "Anda sudah absen hari ini."
-                                isClockedIn.value = true
-                                isClockedOut.value = true
                             } else {
                                 attendanceStatus.value = "Hadir - Masuk pukul ${latestRecord.clockIn}"
-                                isClockedIn.value = true
-                                isClockedOut.value = false
                             }
                         }
                     } catch (e: Exception) {
@@ -461,7 +401,7 @@ fun HomeScreenContent(
             Spacer(modifier = Modifier.height(32.dp))
         }
         item {
-            ClockSection(navController, attendanceStatus.value, isClockedIn.value, isClockedOut.value)
+            ClockSection(navController, attendanceStatus.value, isClockedIn, isClockedOut)
             Spacer(modifier = Modifier.height(32.dp))
         }
         item {
@@ -472,7 +412,6 @@ fun HomeScreenContent(
             }
             Spacer(modifier = Modifier.height(16.dp))
         }
-
         when {
             isLoading -> {
                 item { Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
@@ -586,15 +525,16 @@ fun ConfirmationScreen(
     navController: NavHostController,
     qrCodeId: String,
     attendanceType: String,
+    fileUriString: String?,
     onConfirm: (String, String) -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var currentLocation by remember { mutableStateOf<Location?>(null) }
     var locationFetchStatus by remember { mutableStateOf("Meminta izin lokasi...") }
     var isSubmitting by remember { mutableStateOf(false) }
     val timeNow = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
     val dateNow = SimpleDateFormat("EEEE, dd MMMM yyyy", Locale("id", "ID")).format(Date())
-
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -602,15 +542,13 @@ fun ConfirmationScreen(
         onResult = { permissions ->
             if (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
                 locationFetchStatus = "Mencari lokasi Anda..."
-                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
-                    .addOnSuccessListener { location: Location? ->
-                        if (location != null) {
+                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+                        .addOnSuccessListener { location: Location? ->
                             currentLocation = location
-                            locationFetchStatus = "Lokasi ditemukan!"
-                        } else {
-                            locationFetchStatus = "Gagal mendapatkan lokasi."
+                            locationFetchStatus = if (location != null) "Lokasi ditemukan!" else "Gagal mendapatkan lokasi."
                         }
-                    }
+                }
             } else {
                 locationFetchStatus = "Izin lokasi ditolak."
                 Toast.makeText(context, "Aplikasi memerlukan izin lokasi untuk absen", Toast.LENGTH_LONG).show()
@@ -622,15 +560,10 @@ fun ConfirmationScreen(
     LaunchedEffect(Unit) {
         val permissionsToRequest = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (permissionsToRequest.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
-            locationFetchStatus = "Mencari lokasi Anda..."
             fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
                 .addOnSuccessListener { location: Location? ->
-                    if (location != null) {
-                        currentLocation = location
-                        locationFetchStatus = "Lokasi ditemukan!"
-                    } else {
-                        locationFetchStatus = "Gagal mendapatkan lokasi."
-                    }
+                    currentLocation = location
+                    locationFetchStatus = if (location != null) "Lokasi ditemukan!" else "Gagal mendapatkan lokasi."
                 }
         } else {
             permissionLauncher.launch(permissionsToRequest)
@@ -678,42 +611,94 @@ fun ConfirmationScreen(
             Button(
                 onClick = {
                     isSubmitting = true
-                    val requestQueue = Volley.newRequestQueue(context)
-                    val url = "http://202.138.248.93:10084/api/absensi"
-
-                    val stringRequest = object : StringRequest(
-                        Method.POST, url,
-                        { response ->
-                            isSubmitting = false
-                            Toast.makeText(context, "Absen Berhasil: $response", Toast.LENGTH_SHORT).show()
-                            onConfirm(timeNow, qrCodeId)
-                        },
-                        { error ->
-                            isSubmitting = false
-                            val errorMessage = error.networkResponse?.let { String(it.data, Charsets.UTF_8) } ?: "Error: ${error.message}"
-                            Toast.makeText(context, "Gagal mengirim absen: $errorMessage", Toast.LENGTH_LONG).show()
-                        }) {
-
-                        override fun getHeaders(): MutableMap<String, String> {
-                            val headers = HashMap<String, String>()
-                            val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
-                            val token = sharedPreferences.getString("jwt_token", "")
-                            headers["Authorization"] = "Bearer $token"
-                            return headers
-                        }
-
-                        override fun getBodyContentType() = "application/json; charset=utf-8"
-                        override fun getBody(): ByteArray {
-                            val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-                            val jsonBody = JSONObject()
-                            jsonBody.put("latitude", currentLocation!!.latitude)
-                            jsonBody.put("longitude", currentLocation!!.longitude)
-                            jsonBody.put("android_id", androidId)
-                            jsonBody.put("kodeqr", qrCodeId)
-                            return jsonBody.toString().toByteArray(Charsets.UTF_8)
-                        }
+                    if (currentLocation == null) {
+                        Toast.makeText(context, "Gagal mendapatkan lokasi. Pastikan GPS aktif.", Toast.LENGTH_LONG).show()
+                        isSubmitting = false
+                        return@Button
                     }
-                    requestQueue.add(stringRequest)
+
+                    val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+                    val token = "Bearer ${sharedPreferences.getString("jwt_token", "") ?: ""}"
+
+                    if (attendanceType == "in-lembur") {
+                        val fileUri = fileUriString?.toUri()
+                        if (fileUri == null) {
+                            Toast.makeText(context, "File SPL tidak ditemukan. Silakan pilih ulang.", Toast.LENGTH_LONG).show()
+                            isSubmitting = false
+                            return@Button
+                        }
+
+                        coroutineScope.launch {
+                            try {
+                                val latitudeRequestBody = currentLocation!!.latitude.toString().toRequestBody("text/plain".toMediaTypeOrNull())
+                                val longitudeRequestBody = currentLocation!!.longitude.toString().toRequestBody("text/plain".toMediaTypeOrNull())
+                                val androidIdRequestBody = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID).toRequestBody("text/plain".toMediaTypeOrNull())
+                                // --- TAMBAHKAN KODE QR DI SINI ---
+                                val qrCodeRequestBody = qrCodeId.toRequestBody("text/plain".toMediaTypeOrNull())
+
+
+                                val inputStream = context.contentResolver.openInputStream(fileUri)
+                                val fileRequestBody = inputStream?.readBytes()?.toRequestBody("image/*".toMediaTypeOrNull())
+                                inputStream?.close()
+
+                                if (fileRequestBody == null) {
+                                    Toast.makeText(context, "Gagal membaca file SPL.", Toast.LENGTH_LONG).show()
+                                    isSubmitting = false
+                                    return@launch
+                                }
+
+                                val splFilePart = MultipartBody.Part.createFormData("spl_file", getFileName(context, fileUri) ?: "spl.jpg", fileRequestBody)
+
+                                // Memanggil fungsi API yang sudah diupdate dengan parameter kodeqr
+                                val response = RetrofitClient.instance.startLembur(token, splFilePart, latitudeRequestBody, longitudeRequestBody, androidIdRequestBody, qrCodeRequestBody)
+
+                                if (response.isSuccessful) {
+                                    Toast.makeText(context, "Sukses: ${response.body()}", Toast.LENGTH_SHORT).show()
+                                    onConfirm(timeNow, qrCodeId)
+                                } else {
+                                    val errorBody = response.errorBody()?.string()
+                                    Log.e("RETROFIT_ERROR", "Error: $errorBody, Code: ${response.code()}")
+                                    Toast.makeText(context, "Gagal: $errorBody", Toast.LENGTH_LONG).show()
+                                }
+                            } catch (e: Exception) {
+                                Log.e("RETROFIT_EXCEPTION", "Exception: ${e.message}")
+                                Toast.makeText(context, "Terjadi kesalahan: ${e.message}", Toast.LENGTH_LONG).show()
+                            } finally {
+                                isSubmitting = false
+                            }
+                        }
+
+                    } else {
+                        val url = if (attendanceType == "out-lembur") "http://202.138.248.93:10084/api/lembur/end" else "http://202.138.248.93:10084/api/absensi"
+                        val requestQueue = Volley.newRequestQueue(context)
+                        val stringRequest = object : StringRequest(Method.POST, url,
+                            { response ->
+                                isSubmitting = false
+                                Toast.makeText(context, "Absen Berhasil: $response", Toast.LENGTH_SHORT).show()
+                                onConfirm(timeNow, qrCodeId)
+                            },
+                            { error ->
+                                isSubmitting = false
+                                val errorMessage = error.networkResponse?.let { String(it.data, Charsets.UTF_8) } ?: "Error: ${error.message}"
+                                Toast.makeText(context, "Gagal mengirim absen: $errorMessage", Toast.LENGTH_LONG).show()
+                            }) {
+                            override fun getHeaders(): MutableMap<String, String> {
+                                val headers = HashMap<String, String>()
+                                headers["Authorization"] = token
+                                return headers
+                            }
+                            override fun getBodyContentType() = "application/json; charset=utf-8"
+                            override fun getBody(): ByteArray {
+                                val jsonBody = JSONObject()
+                                jsonBody.put("latitude", currentLocation!!.latitude)
+                                jsonBody.put("longitude", currentLocation!!.longitude)
+                                jsonBody.put("android_id", Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID))
+                                jsonBody.put("kodeqr", qrCodeId) // Selalu tambahkan kodeqr
+                                return jsonBody.toString().toByteArray(Charsets.UTF_8)
+                            }
+                        }
+                        requestQueue.add(stringRequest)
+                    }
                 },
                 enabled = currentLocation != null && !isSubmitting,
                 modifier = Modifier.fillMaxWidth().height(50.dp)
@@ -730,6 +715,7 @@ fun ConfirmationScreen(
     }
 }
 
+
 @Composable
 fun LemburScreen(
     userProfile: UserProfile?,
@@ -738,41 +724,23 @@ fun LemburScreen(
     isLemburClockedIn: Boolean,
     isLemburClockedOut: Boolean,
     history: List<AttendanceRecord>,
-    fileName: String?,
     fileUriString: String?,
-    isSplSubmitted: Boolean,
     onFileSelected: (Uri) -> Unit,
-    onSplSubmit: () -> Unit,
     onLogoutClick: () -> Unit,
     onClearFile: () -> Unit
 ) {
-    var isUploading by remember { mutableStateOf(false) }
-    val coroutineScope = rememberCoroutineScope()
-    val context = LocalContext.current
     val fileUri = fileUriString?.toUri()
-
-    // --- STATE BARU UNTUK DIALOG PREVIEW ---
     var showImagePreviewDialog by remember { mutableStateOf(false) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
-        onResult = { uri: Uri? ->
-            uri?.let {
-                onFileSelected(it)
-            }
-        }
+        onResult = { uri: Uri? -> uri?.let { onFileSelected(it) } }
     )
 
-    // --- DIALOG UNTUK MENAMPILKAN GAMBAR UKURAN PENUH ---
     if (showImagePreviewDialog && fileUri != null) {
         Dialog(onDismissRequest = { showImagePreviewDialog = false }) {
             Card(shape = RoundedCornerShape(16.dp)) {
-                AsyncImage(
-                    model = fileUri,
-                    contentDescription = "Full Screen Preview",
-                    modifier = Modifier.fillMaxWidth(),
-                    contentScale = ContentScale.Fit
-                )
+                AsyncImage(model = fileUri, contentDescription = "Full Screen Preview", modifier = Modifier.fillMaxWidth(), contentScale = ContentScale.Fit)
             }
         }
     }
@@ -790,48 +758,19 @@ fun LemburScreen(
         }
 
         item {
-            Text("1. Upload Surat Perintah Lembur (SPL)", style = MaterialTheme.typography.titleMedium)
+            Text("1. Pilih Gambar SPL", style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(16.dp))
             FilePickerBox(
                 fileUri = fileUri,
                 onClick = {
-                    if (fileUri == null) {
-                        imagePickerLauncher.launch("image/*") // Jika kosong, buka galeri
-                    } else {
-                        showImagePreviewDialog = true // Jika terisi, buka dialog
-                    }
+                    if (fileUri == null) imagePickerLauncher.launch("image/*")
+                    else showImagePreviewDialog = true
                 },
-
-                    onClearImage = onClearFile) // Kirim Uri kosong untuk mereset
-                }
-
-
-
-        if (fileUri != null && !isSplSubmitted) {
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(
-                    onClick = {
-                        coroutineScope.launch {
-                            isUploading = true
-                            delay(2000)
-                            onSplSubmit()
-                            isUploading = false
-                            Toast.makeText(context, "SPL berhasil dikirim!", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().height(50.dp)
-                ) {
-                    if (isUploading) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
-                    } else {
-                        Text("Kirim SPL")
-                    }
-                }
-            }
+                onClearImage = onClearFile
+            )
         }
 
-        if (isSplSubmitted) {
+        if (fileUriString != null) {
             item {
                 Divider(modifier = Modifier.padding(vertical = 32.dp))
                 Text("2. Lakukan Absensi Lembur", style = MaterialTheme.typography.titleMedium)
@@ -848,7 +787,7 @@ fun LemburScreen(
             item {
                 Spacer(modifier = Modifier.height(32.dp))
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = Icons.Filled.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.onBackground)
+                    Icon(imageVector = Icons.Filled.History, "History Icon", tint = MaterialTheme.colorScheme.onBackground)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Riwayat Lembur", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
                 }
@@ -862,6 +801,7 @@ fun LemburScreen(
     }
 }
 
+
 @Composable
 fun FilePickerBox(
     fileUri: Uri?,
@@ -874,10 +814,9 @@ fun FilePickerBox(
             .height(200.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick) // Aksi klik utama (buka galeri/dialog)
+            .clickable(onClick = onClick)
     ) {
         if (fileUri == null || fileUri.toString().isEmpty()) {
-            // Tampilan default jika belum ada gambar
             Column(
                 modifier = Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -887,14 +826,12 @@ fun FilePickerBox(
                 Text("Klik untuk memilih gambar SPL", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center)
             }
         } else {
-            // Tampilan jika gambar sudah dipilih
             AsyncImage(
                 model = fileUri,
                 contentDescription = "Preview SPL",
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop // Crop agar memenuhi box
+                contentScale = ContentScale.Crop
             )
-            // Tombol Hapus (ikon 'X') di pojok kanan atas
             IconButton(
                 onClick = onClearImage,
                 modifier = Modifier
@@ -902,18 +839,21 @@ fun FilePickerBox(
                     .padding(8.dp)
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f), CircleShape)
             ) {
-                Icon(imageVector = Icons.Default.Close, contentDescription = "Hapus Gambar", tint = MaterialTheme.colorScheme.onSurface)
+                Icon(imageVector = Icons.Filled.Close, contentDescription = "Hapus Gambar", tint = MaterialTheme.colorScheme.onSurface)
             }
         }
     }
 }
+
 fun getFileName(context: Context, uri: Uri): String? {
     var fileName: String? = null
-    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) {
-            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (nameIndex != -1) {
-                fileName = cursor.getString(nameIndex)
+    if (uri.scheme == "content") {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex != -1) {
+                    fileName = cursor.getString(nameIndex)
+                }
             }
         }
     }
@@ -934,12 +874,11 @@ fun UserHeader(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
         Spacer(modifier = Modifier.width(12.dp))
         Column {
             Text(
-                text = userProfile?.namaLengkap ?: "Memuat...", // Tampilkan nama lengkap
+                text = userProfile?.namaLengkap ?: "Memuat...",
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
                 color = MaterialTheme.colorScheme.onBackground
             )
-            // Tampilkan NITAD dan Jabatan
             Text(
                 text = "${userProfile?.nitad ?: ""} - ${userProfile?.jabatan ?: ""}",
                 fontSize = 14.sp,
@@ -996,27 +935,20 @@ fun HistoryItem(record: AttendanceRecord) {
     }
 }
 
-// Di dalam file HomeActivity.kt
-
 @Composable
 fun ProfileScreen(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
-    val context = LocalContext.current
     var isLoggingOut by remember { mutableStateOf(false) }
 
-    // Hapus LaunchedEffect dari sini karena data sudah diambil di MainAppScreen
-
     Surface(modifier = Modifier.fillMaxSize()) {
-        if (userProfile == null) { // Tampilkan loading jika userProfile masih null
+        if (userProfile == null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
         } else {
-            // Tampilan jika data berhasil dimuat
             Column(
                 modifier = Modifier.fillMaxSize().padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // --- Bagian Header Profil ---
                 Spacer(modifier = Modifier.height(32.dp))
                 Image(
                     painter = painterResource(id = R.drawable.logo),
@@ -1027,17 +959,12 @@ fun ProfileScreen(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
                 Text(text = userProfile.namaLengkap, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(text = "NITAD: ${userProfile.nitad}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.secondary)
                 Spacer(modifier = Modifier.height(32.dp))
-
-                // --- Bagian Detail Informasi ---
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     ProfileInfoItem(icon = Icons.Filled.Work, label = "Jabatan", value = userProfile.jabatan)
                     ProfileInfoItem(icon = Icons.Filled.Business, label = "Cabang", value = userProfile.cabang)
                     ProfileInfoItem(icon = Icons.Filled.LocationOn, label = "Lokasi", value = userProfile.lokasi)
                 }
-
                 Spacer(modifier = Modifier.weight(1f))
-
-                // --- Tombol Logout ---
                 Button(
                     onClick = {
                         isLoggingOut = true

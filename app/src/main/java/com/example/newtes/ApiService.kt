@@ -1,0 +1,36 @@
+package com.example.newtes
+
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
+import retrofit2.Response
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.*
+
+// Interface untuk mendefinisikan endpoint API
+interface ApiService {
+
+    @Multipart
+    @POST("api/lembur/start")
+    suspend fun startLembur(
+        @Header("Authorization") token: String,
+        @Part splFile: MultipartBody.Part,
+        @Part("latitude") latitude: RequestBody,
+        @Part("longitude") longitude: RequestBody,
+        @Part("android_id") androidId: RequestBody,
+        @Part("kodeqr") kodeqr: RequestBody
+    ): Response<LemburResponse> // <-- DIUBAH DARI String KE LemburResponse
+}
+
+// Object untuk membuat instance Retrofit (singleton)
+object RetrofitClient {
+    private const val BASE_URL = "http://202.138.248.93:10084/"
+
+    val instance: ApiService by lazy {
+        val retrofit = Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+        retrofit.create(ApiService::class.java)
+    }
+}
