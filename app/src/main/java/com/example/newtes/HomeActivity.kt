@@ -34,6 +34,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -135,7 +136,7 @@ fun MainAppScreen() {
     val isLemburClockedIn = rememberSaveable { mutableStateOf(false) }
     val isLemburClockedOut = rememberSaveable { mutableStateOf(false) }
     val lemburClockInTime = rememberSaveable { mutableStateOf("--:--") }
-    val lemburHistory = remember { mutableStateListOf<AttendanceRecord>() } // DIUBAH MENJADI AttendanceRecord
+    val lemburHistory = remember { mutableStateListOf<AttendanceRecord>() }
     val fileUriString = rememberSaveable { mutableStateOf<String?>(null) }
 
     val bottomNavItems = listOf(Screen.Home, Screen.Lembur, Screen.Profile)
@@ -301,6 +302,22 @@ fun MainAppScreen() {
 }
 
 @Composable
+fun MainScreenBackground(content: @Composable () -> Unit) {
+    val backgroundBrush = Brush.verticalGradient(
+        colors = listOf(
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+            MaterialTheme.colorScheme.background,
+            MaterialTheme.colorScheme.background
+        )
+    )
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(backgroundBrush)) {
+        content()
+    }
+}
+
+@Composable
 fun HomeScreenContent(
     userProfile: UserProfile?,
     navController: NavHostController,
@@ -392,41 +409,51 @@ fun HomeScreenContent(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        item {
-            Spacer(modifier = Modifier.height(16.dp))
-            UserHeader(userProfile = userProfile, onLogoutClick = onLogoutClick)
-            Spacer(modifier = Modifier.height(32.dp))
-        }
-        item {
-            ClockSection(navController, attendanceStatus.value, isClockedIn, isClockedOut)
-            Spacer(modifier = Modifier.height(32.dp))
-        }
-        item {
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(imageVector = Icons.Filled.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.onBackground)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Attendance History", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+    MainScreenBackground {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp)
+        ) {
+            item {
+                UserHeader(userProfile = userProfile, onLogoutClick = onLogoutClick)
+                Spacer(modifier = Modifier.height(24.dp))
             }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-        when {
-            isLoading -> {
-                item { Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+            item {
+                ClockSection(navController, attendanceStatus.value, isClockedIn, isClockedOut, isLembur = false)
+                Spacer(modifier = Modifier.height(24.dp))
             }
-            errorMessage != null -> {
-                item { Text(text = "Gagal memuat riwayat:\n$errorMessage", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center) }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(imageVector = Icons.Filled.History, contentDescription = "History Icon", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Riwayat Kehadiran", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
             }
-            history.isEmpty() -> {
-                item { Text(text = "Belum ada riwayat absensi.", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center) }
-            }
-            else -> {
-                items(history) { record ->
-                    HistoryItem(record = record)
-                    Spacer(modifier = Modifier.height(12.dp))
+            when {
+                isLoading -> {
+                    item { Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+                }
+                errorMessage != null -> {
+                    item { Text(text = "Gagal memuat riwayat:\n$errorMessage", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center) }
+                }
+                history.isEmpty() -> {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
+                            Text(text = "Belum ada riwayat absensi.", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                        }
+                    }
+                }
+                else -> {
+                    items(history) { record ->
+                        HistoryItem(record = record)
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
                 }
             }
         }
@@ -475,48 +502,58 @@ fun ClockSection(
         }
     }
 
-    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = currentTime, fontSize = 56.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-        Text(text = currentDate, fontSize = 16.sp, color = MaterialTheme.colorScheme.secondary)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("Status Kehadiran Anda:", color = MaterialTheme.colorScheme.secondary)
-        Text(
-            text = attendanceStatus,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = if (isClockedIn && !isClockedOut) Color(0xFF2ECC71) else MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(24.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Button(
-                onClick = {
-                    val options = ScanOptions()
-                    options.setPrompt("Arahkan kamera ke QR Code Absensi")
-                    options.setBeepEnabled(true)
-                    options.setOrientationLocked(true)
-                    scanLauncher.launch(options)
-                },
-                modifier = Modifier.weight(1f).height(50.dp),
-                enabled = !isClockedIn,
-                shape = RoundedCornerShape(12.dp)
-            ) { Text(if(isLembur) "Clock In Lembur" else "Clock In", fontWeight = FontWeight.Bold) }
-            Button(
-                onClick = {
-                    val options = ScanOptions()
-                    options.setPrompt("Arahkan kamera ke QR Code Absensi")
-                    options.setBeepEnabled(true)
-                    options.setOrientationLocked(true)
-                    scanLauncher.launch(options)
-                },
-                modifier = Modifier.weight(1f).height(50.dp),
-                enabled = isClockedIn && !isClockedOut,
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    disabledContainerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
-                )
-            ) { Text(if(isLembur) "Clock Out Lembur" else "Clock Out", fontWeight = FontWeight.Bold) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(text = currentTime, fontSize = 56.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Text(text = currentDate, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f))
+            Spacer(modifier = Modifier.height(16.dp))
+            Divider()
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Status Kehadiran Anda:", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            Text(
+                text = attendanceStatus,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (isClockedIn && !isClockedOut) Color(0xFF2ECC71) else MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(
+                    onClick = {
+                        val options = ScanOptions()
+                        options.setPrompt("Arahkan kamera ke QR Code Absensi")
+                        options.setBeepEnabled(true)
+                        options.setOrientationLocked(true)
+                        scanLauncher.launch(options)
+                    },
+                    modifier = Modifier.weight(1f).height(50.dp),
+                    enabled = !isClockedIn,
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text(if(isLembur) "Clock In Lembur" else "Clock In", fontWeight = FontWeight.Bold) }
+                Button(
+                    onClick = {
+                        val options = ScanOptions()
+                        options.setPrompt("Arahkan kamera ke QR Code Absensi")
+                        options.setBeepEnabled(true)
+                        options.setOrientationLocked(true)
+                        scanLauncher.launch(options)
+                    },
+                    modifier = Modifier.weight(1f).height(50.dp),
+                    enabled = isClockedIn && !isClockedOut,
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text(if(isLembur) "Clock Out Lembur" else "Clock Out", fontWeight = FontWeight.Bold) }
+            }
         }
     }
 }
@@ -783,7 +820,6 @@ fun LemburScreen(
                     history.clear()
                     history.addAll(records.sortedByDescending { it.date })
 
-                    // LOGIKA UNTUK UPDATE STATUS DAN TOMBOL
                     val latestRecordToday = records.firstOrNull { it.date == todayDateFormatted.split(", ").getOrElse(1) { "" } }
                     if (latestRecordToday != null) {
                         if (latestRecordToday.clockOut == "--:--:--") {
@@ -831,78 +867,163 @@ fun LemburScreen(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        item {
-            Spacer(modifier = Modifier.height(16.dp))
-            UserHeader(userProfile = userProfile, onLogoutClick = onLogoutClick)
-            Spacer(modifier = Modifier.height(32.dp))
-            Text("Pengajuan Lembur", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-
-        if (!isLemburClockedOut.value) {
+    MainScreenBackground {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp)
+        ) {
             item {
-                Text("1. Pilih Gambar SPL (jika Clock In)", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(16.dp))
-                FilePickerBox(
-                    fileUri = fileUri,
-                    onClick = {
-                        if (fileUri == null) imagePickerLauncher.launch("image/*")
-                        else showImagePreviewDialog = true
-                    },
-                    onClearImage = onClearFile
-                )
+                UserHeader(userProfile = userProfile, onLogoutClick = onLogoutClick)
+                Spacer(modifier = Modifier.height(24.dp))
             }
 
-            if (fileUriString != null || isLemburClockedIn.value) {
+            if (!isLemburClockedOut.value) {
                 item {
-                    Divider(modifier = Modifier.padding(vertical = 32.dp))
-                    Text("2. Lakukan Absensi Lembur", style = MaterialTheme.typography.titleMedium)
+                    Text("1. Unggah Surat Perintah Lembur", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(16.dp))
-                    ClockSection(
-                        navController = navController,
-                        attendanceStatus = lemburStatus.value,
-                        isClockedIn = isLemburClockedIn.value,
-                        isClockedOut = isLemburClockedOut.value,
-                        isLembur = true
+                    FilePickerBox(
+                        fileUri = fileUri,
+                        onClick = {
+                            if (fileUri == null) imagePickerLauncher.launch("image/*")
+                            else showImagePreviewDialog = true
+                        },
+                        onClearImage = onClearFile
                     )
                 }
+
+                if (fileUriString != null || isLemburClockedIn.value) {
+                    item {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Text("2. Lakukan Absensi Lembur", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        ClockSection(
+                            navController = navController,
+                            attendanceStatus = lemburStatus.value,
+                            isClockedIn = isLemburClockedIn.value,
+                            isClockedOut = isLemburClockedOut.value,
+                            isLembur = true
+                        )
+                    }
+                }
+            } else {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                    ) {
+                        Text(
+                            text = "Anda sudah menyelesaikan sesi lembur hari ini.",
+                            modifier = Modifier.padding(16.dp),
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
             }
-        } else {
+
             item {
-                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
-                    Text(
-                        text = "Anda sudah menyelesaikan sesi lembur hari ini.",
-                        modifier = Modifier.padding(16.dp),
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer
-                    )
+                Spacer(modifier = Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(imageVector = Icons.Filled.History, "History Icon", tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Riwayat Lembur", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            if (isLoading) {
+                item { Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+            } else if (history.isEmpty()) {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
+                        Text(text = "Belum ada riwayat lembur.", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                    }
+                }
+            } else {
+                items(history) { record ->
+                    HistoryItem(record = record)
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
         }
+    }
+}
 
-        item {
-            Spacer(modifier = Modifier.height(32.dp))
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(imageVector = Icons.Filled.History, "History Icon", tint = MaterialTheme.colorScheme.onBackground)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Riwayat Lembur", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+@Composable
+fun ProfileScreen(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
+    MainScreenBackground {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (userProfile == null) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                Spacer(modifier = Modifier.height(32.dp))
+                Image(
+                    painter = painterResource(id = R.drawable.logo),
+                    contentDescription = "User Avatar",
+                    modifier = Modifier
+                        .size(120.dp)
+                        .clip(CircleShape)
+                        .border(4.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(text = userProfile.namaLengkap, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(text = "NITAD: ${userProfile.nitad}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                Spacer(modifier = Modifier.height(32.dp))
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        ProfileInfoItem(icon = Icons.Filled.Work, label = "Jabatan", value = userProfile.jabatan)
+                        Divider(modifier = Modifier.padding(horizontal = 16.dp))
+                        ProfileInfoItem(icon = Icons.Filled.Business, label = "Cabang", value = userProfile.cabang)
+                        Divider(modifier = Modifier.padding(horizontal = 16.dp))
+                        ProfileInfoItem(icon = Icons.Filled.LocationOn, label = "Lokasi", value = userProfile.lokasi)
+                    }
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                Button(
+                    onClick = onLogoutClick,
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("LOGOUT", fontWeight = FontWeight.Bold)
+                }
             }
-            Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+}
 
-        if (isLoading) {
-            item { Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
-        } else if (history.isEmpty()) {
-            item { Text(text = "Belum ada riwayat lembur.", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center) }
-        } else {
-            items(history) { record ->
-                HistoryItem(record = record)
-                Spacer(modifier = Modifier.height(12.dp))
-            }
+@Composable
+fun ProfileInfoItem(icon: ImageVector, label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(imageVector = icon, contentDescription = label, tint = MaterialTheme.colorScheme.primary)
+        Spacer(modifier = Modifier.width(16.dp))
+        Column {
+            Text(text = label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            Text(text = value, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -913,38 +1034,43 @@ fun FilePickerBox(
     onClick: () -> Unit,
     onClearImage: () -> Unit
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(200.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick)
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        if (fileUri == null || fileUri.toString().isEmpty()) {
-            Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Icon(imageVector = Icons.Filled.CloudUpload, contentDescription = "Upload Icon", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(48.dp))
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Klik untuk memilih gambar SPL", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center)
-            }
-        } else {
-            AsyncImage(
-                model = fileUri,
-                contentDescription = "Preview SPL",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
-            IconButton(
-                onClick = onClearImage,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f), CircleShape)
-            ) {
-                Icon(imageVector = Icons.Filled.Close, contentDescription = "Hapus Gambar", tint = MaterialTheme.colorScheme.onSurface)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(200.dp)
+                .clickable(onClick = onClick)
+        ) {
+            if (fileUri == null || fileUri.toString().isEmpty()) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(imageVector = Icons.Filled.CloudUpload, contentDescription = "Upload Icon", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Klik untuk memilih gambar SPL", color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
+                }
+            } else {
+                AsyncImage(
+                    model = fileUri,
+                    contentDescription = "Preview SPL",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                IconButton(
+                    onClick = onClearImage,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f), CircleShape)
+                ) {
+                    Icon(imageVector = Icons.Filled.Close, contentDescription = "Hapus Gambar", tint = MaterialTheme.colorScheme.onSurface)
+                }
             }
         }
     }
@@ -966,33 +1092,32 @@ fun getFileName(context: Context, uri: Uri): String? {
 }
 
 @Composable
-fun PlaceholderScreen(text: String) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(text = text, color = MaterialTheme.colorScheme.onBackground, fontSize = 20.sp)
-    }
-}
-
-@Composable
 fun UserHeader(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Image(painter = painterResource(id = R.drawable.logo), contentDescription = "User Avatar", modifier = Modifier.size(50.dp).clip(CircleShape))
-        Spacer(modifier = Modifier.width(12.dp))
+        Image(
+            painter = painterResource(id = R.drawable.logo),
+            contentDescription = "User Avatar",
+            modifier = Modifier
+                .size(50.dp)
+                .clip(CircleShape)
+                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
         Column {
             Text(
                 text = userProfile?.namaLengkap ?: "Memuat...",
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-                color = MaterialTheme.colorScheme.onBackground
             )
             Text(
-                text = "${userProfile?.nitad ?: ""} - ${userProfile?.jabatan ?: ""}",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.secondary
+                text = userProfile?.nitad ?: "",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
             )
         }
         Spacer(modifier = Modifier.weight(1f))
         IconButton(onClick = onLogoutClick) {
-            Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.secondary)
+            Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
         }
     }
 }
@@ -1001,109 +1126,43 @@ fun UserHeader(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
 fun HistoryItem(record: AttendanceRecord) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Filled.CalendarToday,
-                contentDescription = "Tanggal",
-                tint = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.size(32.dp)
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "${record.day}, ${record.date}",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    text = "${record.clockIn} - ${record.clockOut}",
-                    fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.secondary
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (record.isLate) MaterialTheme.colorScheme.primary else Color(0xFF2ECC71)
-                    )
-            )
-        }
-    }
-}
-
-@Composable
-fun ProfileScreen(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
-    var isLoggingOut by remember { mutableStateOf(false) }
-
-    Surface(modifier = Modifier.fillMaxSize()) {
-        if (userProfile == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        } else {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Spacer(modifier = Modifier.height(32.dp))
-                Image(
-                    painter = painterResource(id = R.drawable.logo),
-                    contentDescription = "User Avatar",
-                    modifier = Modifier.size(120.dp).clip(CircleShape).border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(text = userProfile.namaLengkap, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(text = "NITAD: ${userProfile.nitad}", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.secondary)
-                Spacer(modifier = Modifier.height(32.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    ProfileInfoItem(icon = Icons.Filled.Work, label = "Jabatan", value = userProfile.jabatan)
-                    ProfileInfoItem(icon = Icons.Filled.Business, label = "Cabang", value = userProfile.cabang)
-                    ProfileInfoItem(icon = Icons.Filled.LocationOn, label = "Lokasi", value = userProfile.lokasi)
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                Button(
-                    onClick = {
-                        isLoggingOut = true
-                        onLogoutClick()
-                    },
-                    enabled = !isLoggingOut,
-                    modifier = Modifier.fillMaxWidth().height(50.dp)
-                ) {
-                    if (isLoggingOut) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
-                    } else {
-                        Text("Logout", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    }
-                }
-            }
-        }
-    }
-}
-@Composable
-fun ProfileInfoItem(icon: ImageVector, label: String, value: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(imageVector = icon, contentDescription = label, tint = MaterialTheme.colorScheme.primary)
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (record.isLate) MaterialTheme.colorScheme.errorContainer
+                        else MaterialTheme.colorScheme.primaryContainer
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (record.isLate) Icons.Default.Warning else Icons.Default.CheckCircle,
+                    contentDescription = "Status",
+                    tint = if (record.isLate) MaterialTheme.colorScheme.onErrorContainer
+                    else MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
             Spacer(modifier = Modifier.width(16.dp))
-            Column {
-                Text(text = label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                Text(text = value, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "${record.day}, ${record.date}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "Masuk: ${record.clockIn} - Keluar: ${record.clockOut}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
             }
         }
     }
