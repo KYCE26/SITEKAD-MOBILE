@@ -88,10 +88,12 @@ data class UserProfile(
 data class AttendanceRecord(
     val date: String, val day: String, val clockIn: String, val clockOut: String, val isLate: Boolean = false
 )
+
 data class LemburResponse(
     val message: String,
     val file_disimpan: String
 )
+
 sealed class Screen(val route: String) {
     object Home : Screen("home_main")
     object Lembur : Screen("lembur")
@@ -133,7 +135,7 @@ fun MainAppScreen() {
     val isLemburClockedIn = rememberSaveable { mutableStateOf(false) }
     val isLemburClockedOut = rememberSaveable { mutableStateOf(false) }
     val lemburClockInTime = rememberSaveable { mutableStateOf("--:--") }
-    val lemburHistory = remember { mutableStateListOf<AttendanceRecord>() }
+    val lemburHistory = remember { mutableStateListOf<AttendanceRecord>() } // DIUBAH MENJADI AttendanceRecord
     val fileUriString = rememberSaveable { mutableStateOf<String?>(null) }
 
     val bottomNavItems = listOf(Screen.Home, Screen.Lembur, Screen.Profile)
@@ -268,10 +270,9 @@ fun MainAppScreen() {
                                 fileUriString.value = null
                             }
                             "out-lembur" -> {
-                                val newRecord = AttendanceRecord(SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date()), SimpleDateFormat("E", Locale("id", "ID")).format(Date()), lemburClockInTime.value, time)
-                                lemburHistory.add(0, newRecord)
-                                isLemburClockedOut.value = true
                                 lemburStatus.value = "Anda sudah selesai lembur hari ini."
+                                isLemburClockedIn.value = true
+                                isLemburClockedOut.value = true
                             }
                         }
                         navController.popBackStack()
@@ -282,9 +283,9 @@ fun MainAppScreen() {
                 LemburScreen(
                     userProfile = userProfile.value,
                     navController = navController,
-                    lemburStatus = lemburStatus.value,
-                    isLemburClockedIn = isLemburClockedIn.value,
-                    isLemburClockedOut = isLemburClockedOut.value,
+                    lemburStatus = lemburStatus,
+                    isLemburClockedIn = isLemburClockedIn,
+                    isLemburClockedOut = isLemburClockedOut,
                     history = lemburHistory,
                     fileUriString = fileUriString.value,
                     onFileSelected = { uri -> fileUriString.value = uri.toString() },
@@ -347,7 +348,7 @@ fun HomeScreenContent(
                                     date = formatDate(item.getString("tgl_absen")),
                                     day = formatDay(item.getString("tgl_absen")),
                                     clockIn = item.getString("jam_masuk"),
-                                    clockOut = item.optString("jam_keluar", "null"),
+                                    clockOut = item.optString("jam_keluar", "--:--:--"),
                                     isLate = false
                                 )
                             )
@@ -357,7 +358,7 @@ fun HomeScreenContent(
                         val todayDateString = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date())
                         val latestRecord = history.firstOrNull()
                         if (latestRecord != null && latestRecord.date == todayDateString) {
-                            if (latestRecord.clockOut != "null") {
+                            if (latestRecord.clockOut != "--:--:--") {
                                 attendanceStatus.value = "Anda sudah absen hari ini."
                             } else {
                                 attendanceStatus.value = "Hadir - Masuk pukul ${latestRecord.clockIn}"
@@ -633,9 +634,7 @@ fun ConfirmationScreen(
                                 val latitudeRequestBody = currentLocation!!.latitude.toString().toRequestBody("text/plain".toMediaTypeOrNull())
                                 val longitudeRequestBody = currentLocation!!.longitude.toString().toRequestBody("text/plain".toMediaTypeOrNull())
                                 val androidIdRequestBody = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID).toRequestBody("text/plain".toMediaTypeOrNull())
-                                // --- TAMBAHKAN KODE QR DI SINI ---
                                 val qrCodeRequestBody = qrCodeId.toRequestBody("text/plain".toMediaTypeOrNull())
-
 
                                 val inputStream = context.contentResolver.openInputStream(fileUri)
                                 val fileRequestBody = inputStream?.readBytes()?.toRequestBody("image/*".toMediaTypeOrNull())
@@ -649,11 +648,11 @@ fun ConfirmationScreen(
 
                                 val splFilePart = MultipartBody.Part.createFormData("spl_file", getFileName(context, fileUri) ?: "spl.jpg", fileRequestBody)
 
-                                // Memanggil fungsi API yang sudah diupdate dengan parameter kodeqr
                                 val response = RetrofitClient.instance.startLembur(token, splFilePart, latitudeRequestBody, longitudeRequestBody, androidIdRequestBody, qrCodeRequestBody)
 
                                 if (response.isSuccessful) {
-                                    Toast.makeText(context, "Sukses: ${response.body()}", Toast.LENGTH_SHORT).show()
+                                    val successMessage = response.body()?.message ?: "Lembur berhasil dimulai"
+                                    Toast.makeText(context, "Sukses: $successMessage", Toast.LENGTH_SHORT).show()
                                     onConfirm(timeNow, qrCodeId)
                                 } else {
                                     val errorBody = response.errorBody()?.string()
@@ -670,8 +669,9 @@ fun ConfirmationScreen(
 
                     } else {
                         val url = if (attendanceType == "out-lembur") "http://202.138.248.93:10084/api/lembur/end" else "http://202.138.248.93:10084/api/absensi"
+                        val method = if (attendanceType == "out-lembur") Request.Method.PUT else Request.Method.POST
                         val requestQueue = Volley.newRequestQueue(context)
-                        val stringRequest = object : StringRequest(Method.POST, url,
+                        val stringRequest = object : StringRequest(method, url,
                             { response ->
                                 isSubmitting = false
                                 Toast.makeText(context, "Absen Berhasil: $response", Toast.LENGTH_SHORT).show()
@@ -693,7 +693,9 @@ fun ConfirmationScreen(
                                 jsonBody.put("latitude", currentLocation!!.latitude)
                                 jsonBody.put("longitude", currentLocation!!.longitude)
                                 jsonBody.put("android_id", Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID))
-                                jsonBody.put("kodeqr", qrCodeId) // Selalu tambahkan kodeqr
+                                if (attendanceType != "out-lembur") {
+                                    jsonBody.put("kodeqr", qrCodeId)
+                                }
                                 return jsonBody.toString().toByteArray(Charsets.UTF_8)
                             }
                         }
@@ -720,22 +722,106 @@ fun ConfirmationScreen(
 fun LemburScreen(
     userProfile: UserProfile?,
     navController: NavHostController,
-    lemburStatus: String,
-    isLemburClockedIn: Boolean,
-    isLemburClockedOut: Boolean,
-    history: List<AttendanceRecord>,
+    lemburStatus: MutableState<String>,
+    isLemburClockedIn: MutableState<Boolean>,
+    isLemburClockedOut: MutableState<Boolean>,
+    history: MutableList<AttendanceRecord>,
     fileUriString: String?,
     onFileSelected: (Uri) -> Unit,
     onLogoutClick: () -> Unit,
     onClearFile: () -> Unit
 ) {
+    val context = LocalContext.current
     val fileUri = fileUriString?.toUri()
     var showImagePreviewDialog by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(true) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
         onResult = { uri: Uri? -> uri?.let { onFileSelected(it) } }
     )
+
+    LaunchedEffect(Unit) {
+        val url = "http://202.138.248.93:10084/api/lembur/history"
+        val requestQueue = Volley.newRequestQueue(context)
+        val jsonObjectRequest = object : JsonObjectRequest(
+            Request.Method.GET, url, null,
+            { response ->
+                try {
+                    isLoading = false
+                    val historyArray = response.getJSONArray("history")
+                    val records = mutableListOf<AttendanceRecord>()
+                    val todayDateFormatted = SimpleDateFormat("EEEE, dd MMM yyyy", Locale("id", "ID")).format(Date())
+
+                    for (i in 0 until historyArray.length()) {
+                        val item = historyArray.getJSONObject(i)
+
+                        val tglAbsen = item.getString("tgl_absen")
+                        val jamKeluar = if (item.isNull("jam_keluar")) "--:--:--" else item.getString("jam_keluar")
+
+                        fun formatDate(dateString: String): String {
+                            val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
+                            inputFormat.timeZone = TimeZone.getTimeZone("UTC")
+                            val outputFormat = SimpleDateFormat("EEEE, dd MMM yyyy", Locale("id", "ID"))
+                            return try {
+                                inputFormat.parse(dateString)?.let { outputFormat.format(it) } ?: dateString
+                            } catch (e: Exception) { dateString }
+                        }
+
+                        val formattedDate = formatDate(tglAbsen)
+
+                        records.add(
+                            AttendanceRecord(
+                                date = formattedDate.split(", ").getOrElse(1) { "" },
+                                day = formattedDate.split(", ").getOrElse(0) { "" },
+                                clockIn = item.getString("jam_masuk"),
+                                clockOut = jamKeluar,
+                                isLate = false
+                            )
+                        )
+                    }
+                    history.clear()
+                    history.addAll(records.sortedByDescending { it.date })
+
+                    // LOGIKA UNTUK UPDATE STATUS DAN TOMBOL
+                    val latestRecordToday = records.firstOrNull { it.date == todayDateFormatted.split(", ").getOrElse(1) { "" } }
+                    if (latestRecordToday != null) {
+                        if (latestRecordToday.clockOut == "--:--:--") {
+                            lemburStatus.value = "Lembur - Masuk pukul ${latestRecordToday.clockIn}"
+                            isLemburClockedIn.value = true
+                            isLemburClockedOut.value = false
+                        } else {
+                            lemburStatus.value = "Anda sudah selesai lembur hari ini."
+                            isLemburClockedIn.value = true
+                            isLemburClockedOut.value = true
+                        }
+                    } else {
+                        lemburStatus.value = "Belum Lembur Hari Ini"
+                        isLemburClockedIn.value = false
+                        isLemburClockedOut.value = false
+                    }
+
+                } catch (e: Exception) {
+                    isLoading = false
+                    Log.e("HistoryLembur", "Error parsing: ${e.message}")
+                    Toast.makeText(context, "Gagal memproses riwayat lembur", Toast.LENGTH_SHORT).show()
+                }
+            },
+            { error ->
+                isLoading = false
+                Log.e("HistoryLembur", "API Error: ${error.message}")
+                Toast.makeText(context, "Gagal mengambil riwayat lembur", Toast.LENGTH_SHORT).show()
+            }) {
+            override fun getHeaders(): MutableMap<String, String> {
+                val headers = HashMap<String, String>()
+                val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+                val token = sharedPreferences.getString("jwt_token", null)
+                headers["Authorization"] = "Bearer $token"
+                return headers
+            }
+        }
+        requestQueue.add(jsonObjectRequest)
+    }
 
     if (showImagePreviewDialog && fileUri != null) {
         Dialog(onDismissRequest = { showImagePreviewDialog = false }) {
@@ -757,42 +843,62 @@ fun LemburScreen(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        item {
-            Text("1. Pilih Gambar SPL", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(16.dp))
-            FilePickerBox(
-                fileUri = fileUri,
-                onClick = {
-                    if (fileUri == null) imagePickerLauncher.launch("image/*")
-                    else showImagePreviewDialog = true
-                },
-                onClearImage = onClearFile
-            )
-        }
-
-        if (fileUriString != null) {
+        if (!isLemburClockedOut.value) {
             item {
-                Divider(modifier = Modifier.padding(vertical = 32.dp))
-                Text("2. Lakukan Absensi Lembur", style = MaterialTheme.typography.titleMedium)
+                Text("1. Pilih Gambar SPL (jika Clock In)", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(16.dp))
-                ClockSection(
-                    navController = navController,
-                    attendanceStatus = lemburStatus,
-                    isClockedIn = isLemburClockedIn,
-                    isClockedOut = isLemburClockedOut,
-                    isLembur = true
+                FilePickerBox(
+                    fileUri = fileUri,
+                    onClick = {
+                        if (fileUri == null) imagePickerLauncher.launch("image/*")
+                        else showImagePreviewDialog = true
+                    },
+                    onClearImage = onClearFile
                 )
             }
 
-            item {
-                Spacer(modifier = Modifier.height(32.dp))
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = Icons.Filled.History, "History Icon", tint = MaterialTheme.colorScheme.onBackground)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Riwayat Lembur", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+            if (fileUriString != null || isLemburClockedIn.value) {
+                item {
+                    Divider(modifier = Modifier.padding(vertical = 32.dp))
+                    Text("2. Lakukan Absensi Lembur", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    ClockSection(
+                        navController = navController,
+                        attendanceStatus = lemburStatus.value,
+                        isClockedIn = isLemburClockedIn.value,
+                        isClockedOut = isLemburClockedOut.value,
+                        isLembur = true
+                    )
                 }
-                Spacer(modifier = Modifier.height(16.dp))
             }
+        } else {
+            item {
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+                    Text(
+                        text = "Anda sudah menyelesaikan sesi lembur hari ini.",
+                        modifier = Modifier.padding(16.dp),
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(32.dp))
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(imageVector = Icons.Filled.History, "History Icon", tint = MaterialTheme.colorScheme.onBackground)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Riwayat Lembur", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        if (isLoading) {
+            item { Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+        } else if (history.isEmpty()) {
+            item { Text(text = "Belum ada riwayat lembur.", color = MaterialTheme.colorScheme.secondary, textAlign = TextAlign.Center) }
+        } else {
             items(history) { record ->
                 HistoryItem(record = record)
                 Spacer(modifier = Modifier.height(12.dp))
@@ -800,7 +906,6 @@ fun LemburScreen(
         }
     }
 }
-
 
 @Composable
 fun FilePickerBox(

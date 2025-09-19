@@ -19,7 +19,7 @@ interface ApiService {
         @Part("longitude") longitude: RequestBody,
         @Part("android_id") androidId: RequestBody,
         @Part("kodeqr") kodeqr: RequestBody
-    ): Response<LemburResponse> // <-- DIUBAH DARI String KE LemburResponse
+    ): Response<LemburResponse>
 }
 
 // Object untuk membuat instance Retrofit (singleton)
