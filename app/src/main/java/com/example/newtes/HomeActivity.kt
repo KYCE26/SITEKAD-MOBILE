@@ -142,10 +142,12 @@ fun MainAppScreen() {
     val bottomNavItems = listOf(Screen.Home, Screen.Lembur, Screen.Profile)
 
     LaunchedEffect(Unit) {
-        val url = "http://202.138.248.93:10084/api/profile"
         val requestQueue = Volley.newRequestQueue(context)
-        val jsonObjectRequest = object : JsonObjectRequest(
-            Request.Method.GET, url, null,
+
+        // 1. Ambil Profil User
+        val profileUrl = "http://202.138.248.93:10084/api/profile"
+        val profileRequest = object : JsonObjectRequest(
+            Request.Method.GET, profileUrl, null,
             { response ->
                 try {
                     val profileJson = response.getJSONObject("profile")
@@ -158,10 +160,10 @@ fun MainAppScreen() {
                         lokasi = profileJson.getString("Lokasi")
                     )
                 } catch (e: Exception) {
-                    Log.e("ProfileAPI", "Gagal parsing profil: ${e.message}")
+                    Log.e("MainAppScreen", "Error parsing profile: ${e.message}")
                 }
             },
-            { error -> Log.e("ProfileAPI", "Gagal mengambil profil: ${error.message}") }
+            { error -> Log.e("MainAppScreen", "Error fetching profile: ${error.message}") }
         ) {
             override fun getHeaders(): MutableMap<String, String> {
                 val headers = HashMap<String, String>()
@@ -171,7 +173,78 @@ fun MainAppScreen() {
                 return headers
             }
         }
-        requestQueue.add(jsonObjectRequest)
+        requestQueue.add(profileRequest)
+
+        // 2. Ambil Riwayat Absensi Biasa
+        val historyUrl = "http://202.138.248.93:10084/api/uhistori"
+        val historyRequest = object : JsonObjectRequest(
+            Request.Method.GET, historyUrl, null,
+            { response ->
+                try {
+                    val historyArray = response.getJSONArray("history")
+                    val records = mutableListOf<AttendanceRecord>()
+                    for (i in 0 until historyArray.length()) {
+                        val item = historyArray.getJSONObject(i)
+                        fun formatDate(dateString: String): Pair<String, String> {
+                            val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
+                            inputFormat.timeZone = TimeZone.getTimeZone("UTC")
+                            val outputFormatDate = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID"))
+                            val outputFormatDay = SimpleDateFormat("EEEE", Locale("id", "ID"))
+                            return try {
+                                val date = inputFormat.parse(dateString)
+                                Pair(outputFormatDay.format(date!!), outputFormatDate.format(date))
+                            } catch (e: Exception) {
+                                Pair("", "")
+                            }
+                        }
+                        val (day, date) = formatDate(item.getString("tgl_absen"))
+                        records.add(
+                            AttendanceRecord(
+                                date = date,
+                                day = day,
+                                clockIn = item.getString("jam_masuk"),
+                                clockOut = if (item.isNull("jam_keluar")) "--:--:--" else item.getString("jam_keluar"),
+                                isLate = false
+                            )
+                        )
+                    }
+                    attendanceHistory.clear()
+                    attendanceHistory.addAll(records)
+
+                    val todayDateString = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date())
+                    val latestRecordToday = attendanceHistory.firstOrNull { it.date == todayDateString }
+
+                    if (latestRecordToday != null) {
+                        if (latestRecordToday.clockOut == "--:--:--") {
+                            attendanceStatus.value = "Hadir - Masuk pukul ${latestRecordToday.clockIn}"
+                            isClockedIn.value = true
+                            isClockedOut.value = false
+                        } else {
+                            attendanceStatus.value = "Anda sudah absen hari ini."
+                            isClockedIn.value = true
+                            isClockedOut.value = true
+                        }
+                    } else {
+                        attendanceStatus.value = "Belum Absen Hari Ini"
+                        isClockedIn.value = false
+                        isClockedOut.value = false
+                    }
+
+                } catch (e: Exception) {
+                    Log.e("MainAppScreen", "Error parsing history: ${e.message}")
+                }
+            },
+            { error -> Log.e("MainAppScreen", "Error fetching history: ${error.message}") }
+        ) {
+            override fun getHeaders(): MutableMap<String, String> {
+                val headers = HashMap<String, String>()
+                val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+                val token = sharedPreferences.getString("jwt_token", null)
+                headers["Authorization"] = "Bearer $token"
+                return headers
+            }
+        }
+        requestQueue.add(historyRequest)
     }
 
     fun doLogout() {
@@ -228,7 +301,7 @@ fun MainAppScreen() {
                 HomeScreenContent(
                     userProfile = userProfile.value,
                     navController = navController,
-                    attendanceStatus = attendanceStatus,
+                    attendanceStatus = attendanceStatus.value,
                     isClockedIn = isClockedIn.value,
                     isClockedOut = isClockedOut.value,
                     history = attendanceHistory,
@@ -321,94 +394,12 @@ fun MainScreenBackground(content: @Composable () -> Unit) {
 fun HomeScreenContent(
     userProfile: UserProfile?,
     navController: NavHostController,
-    attendanceStatus: MutableState<String>,
+    attendanceStatus: String,
     isClockedIn: Boolean,
     isClockedOut: Boolean,
     history: MutableList<AttendanceRecord>,
     onLogoutClick: () -> Unit
 ) {
-    val context = LocalContext.current
-    var isLoading by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(Unit) {
-        if (history.isEmpty()) {
-            val url = "http://202.138.248.93:10084/api/uhistori"
-            val requestQueue = Volley.newRequestQueue(context)
-            val jsonObjectRequest = object : JsonObjectRequest(
-                Request.Method.GET, url, null,
-                { response ->
-                    try {
-                        isLoading = false
-                        val historyArray = response.getJSONArray("history")
-                        val records = mutableListOf<AttendanceRecord>()
-                        for (i in 0 until historyArray.length()) {
-                            val item = historyArray.getJSONObject(i)
-                            fun formatDate(dateString: String): String {
-                                val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
-                                inputFormat.timeZone = TimeZone.getTimeZone("UTC")
-                                val outputFormat = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID"))
-                                return try {
-                                    inputFormat.parse(dateString)?.let { outputFormat.format(it) } ?: dateString
-                                } catch (e: Exception) { dateString }
-                            }
-                            fun formatDay(dateString: String): String {
-                                val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
-                                inputFormat.timeZone = TimeZone.getTimeZone("UTC")
-                                val outputFormat = SimpleDateFormat("E", Locale("id", "ID"))
-                                return try {
-                                    inputFormat.parse(dateString)?.let { outputFormat.format(it) } ?: ""
-                                } catch (e: Exception) { "" }
-                            }
-                            records.add(
-                                AttendanceRecord(
-                                    date = formatDate(item.getString("tgl_absen")),
-                                    day = formatDay(item.getString("tgl_absen")),
-                                    clockIn = item.getString("jam_masuk"),
-                                    clockOut = item.optString("jam_keluar", "--:--:--"),
-                                    isLate = false
-                                )
-                            )
-                        }
-                        history.clear()
-                        history.addAll(records)
-                        val todayDateString = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date())
-                        val latestRecord = history.firstOrNull()
-                        if (latestRecord != null && latestRecord.date == todayDateString) {
-                            if (latestRecord.clockOut != "--:--:--") {
-                                attendanceStatus.value = "Anda sudah absen hari ini."
-                            } else {
-                                attendanceStatus.value = "Hadir - Masuk pukul ${latestRecord.clockIn}"
-                            }
-                        }
-                    } catch (e: Exception) {
-                        errorMessage = "Gagal memproses data: ${e.message}"
-                        isLoading = false
-                    }
-                },
-                { error ->
-                    isLoading = false
-                    errorMessage = error.networkResponse?.let {
-                        val errorData = String(it.data, Charsets.UTF_8)
-                        "Error ${it.statusCode}: $errorData"
-                    } ?: "Error: ${error.message}"
-                }) {
-                override fun getHeaders(): MutableMap<String, String> {
-                    val headers = HashMap<String, String>()
-                    val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
-                    val token = sharedPreferences.getString("jwt_token", null)
-                    if (token != null) {
-                        headers["Authorization"] = "Bearer $token"
-                    }
-                    return headers
-                }
-            }
-            requestQueue.add(jsonObjectRequest)
-        } else {
-            isLoading = false
-        }
-    }
-
     MainScreenBackground {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -419,7 +410,7 @@ fun HomeScreenContent(
                 Spacer(modifier = Modifier.height(24.dp))
             }
             item {
-                ClockSection(navController, attendanceStatus.value, isClockedIn, isClockedOut, isLembur = false)
+                ClockSection(navController, attendanceStatus, isClockedIn, isClockedOut, isLembur = false)
                 Spacer(modifier = Modifier.height(24.dp))
             }
             item {
@@ -435,25 +426,16 @@ fun HomeScreenContent(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
-            when {
-                isLoading -> {
-                    item { Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
-                }
-                errorMessage != null -> {
-                    item { Text(text = "Gagal memuat riwayat:\n$errorMessage", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center) }
-                }
-                history.isEmpty() -> {
-                    item {
-                        Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
-                            Text(text = "Belum ada riwayat absensi.", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-                        }
+            if (history.isEmpty()) {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
+                        Text(text = "Memuat riwayat...", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                     }
                 }
-                else -> {
-                    items(history) { record ->
-                        HistoryItem(record = record)
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
+            } else {
+                items(history) { record ->
+                    HistoryItem(record = record)
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
         }
@@ -772,6 +754,7 @@ fun LemburScreen(
     val fileUri = fileUriString?.toUri()
     var showImagePreviewDialog by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(true) }
+    var hasStaleOvertime by remember { mutableStateOf(false) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
@@ -820,21 +803,29 @@ fun LemburScreen(
                     history.clear()
                     history.addAll(records.sortedByDescending { it.date })
 
-                    val latestRecordToday = records.firstOrNull { it.date == todayDateFormatted.split(", ").getOrElse(1) { "" } }
-                    if (latestRecordToday != null) {
-                        if (latestRecordToday.clockOut == "--:--:--") {
-                            lemburStatus.value = "Lembur - Masuk pukul ${latestRecordToday.clockIn}"
-                            isLemburClockedIn.value = true
-                            isLemburClockedOut.value = false
-                        } else {
-                            lemburStatus.value = "Anda sudah selesai lembur hari ini."
-                            isLemburClockedIn.value = true
-                            isLemburClockedOut.value = true
-                        }
+                    // Cek Sesi Lembur Kemarin yang Nyangkut
+                    val staleRecord = records.firstOrNull {
+                        it.clockOut == "--:--:--" && it.date != todayDateFormatted.split(", ").getOrElse(1) { "" }
+                    }
+                    if (staleRecord != null) {
+                        hasStaleOvertime = true
                     } else {
-                        lemburStatus.value = "Belum Lembur Hari Ini"
-                        isLemburClockedIn.value = false
-                        isLemburClockedOut.value = false
+                        val latestRecordToday = records.firstOrNull { it.date == todayDateFormatted.split(", ").getOrElse(1) { "" } }
+                        if (latestRecordToday != null) {
+                            if (latestRecordToday.clockOut == "--:--:--") {
+                                lemburStatus.value = "Lembur - Masuk pukul ${latestRecordToday.clockIn}"
+                                isLemburClockedIn.value = true
+                                isLemburClockedOut.value = false
+                            } else {
+                                lemburStatus.value = "Anda sudah selesai lembur hari ini."
+                                isLemburClockedIn.value = true
+                                isLemburClockedOut.value = true
+                            }
+                        } else {
+                            lemburStatus.value = "Belum Lembur Hari Ini"
+                            isLemburClockedIn.value = false
+                            isLemburClockedOut.value = false
+                        }
                     }
 
                 } catch (e: Exception) {
@@ -877,7 +868,23 @@ fun LemburScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
-            if (!isLemburClockedOut.value) {
+            item {
+                Text("Pengajuan Lembur", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+
+            if (hasStaleOvertime) {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                        Text(
+                            text = "Ditemukan sesi lembur dari hari sebelumnya yang belum ditutup. Harap hubungi admin.",
+                            modifier = Modifier.padding(16.dp),
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            } else if (!isLemburClockedOut.value) {
                 item {
                     Text("1. Unggah Surat Perintah Lembur", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(16.dp))
@@ -907,10 +914,7 @@ fun LemburScreen(
                 }
             } else {
                 item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
-                    ) {
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
                         Text(
                             text = "Anda sudah menyelesaikan sesi lembur hari ini.",
                             modifier = Modifier.padding(16.dp),
