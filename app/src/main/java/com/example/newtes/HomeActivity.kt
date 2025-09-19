@@ -48,6 +48,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -141,8 +144,11 @@ fun MainAppScreen() {
 
     val bottomNavItems = listOf(Screen.Home, Screen.Lembur, Screen.Profile)
 
-    LaunchedEffect(Unit) {
+    // --- FUNGSI BARU UNTUK MENGAMBIL SEMUA DATA ---
+    val fetchData = {
         val requestQueue = Volley.newRequestQueue(context)
+        val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+        val token = sharedPreferences.getString("jwt_token", null)
 
         // 1. Ambil Profil User
         val profileUrl = "http://202.138.248.93:10084/api/profile"
@@ -167,8 +173,6 @@ fun MainAppScreen() {
         ) {
             override fun getHeaders(): MutableMap<String, String> {
                 val headers = HashMap<String, String>()
-                val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
-                val token = sharedPreferences.getString("jwt_token", null)
                 headers["Authorization"] = "Bearer $token"
                 return headers
             }
@@ -185,6 +189,7 @@ fun MainAppScreen() {
                     val records = mutableListOf<AttendanceRecord>()
                     for (i in 0 until historyArray.length()) {
                         val item = historyArray.getJSONObject(i)
+                        // Fungsi helper untuk format tanggal
                         fun formatDate(dateString: String): Pair<String, String> {
                             val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
                             inputFormat.timeZone = TimeZone.getTimeZone("UTC")
@@ -238,13 +243,36 @@ fun MainAppScreen() {
         ) {
             override fun getHeaders(): MutableMap<String, String> {
                 val headers = HashMap<String, String>()
-                val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
-                val token = sharedPreferences.getString("jwt_token", null)
                 headers["Authorization"] = "Bearer $token"
                 return headers
             }
         }
         requestQueue.add(historyRequest)
+    }
+
+    // --- LOGIKA AUTO-REFRESH DAN REFRESH ON RESUME ---
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                Log.d("Lifecycle", "App Resumed, Fetching Data...")
+                fetchData()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    // Polling setiap 30 detik
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30000L) // Tunggu 30 detik
+            Log.d("Polling", "Polling for new data...")
+            fetchData()
+        }
     }
 
     fun doLogout() {
@@ -349,6 +377,8 @@ fun MainAppScreen() {
                                 isLemburClockedOut.value = true
                             }
                         }
+                        // Setelah konfirmasi, panggil fetchData untuk refresh data
+                        fetchData()
                         navController.popBackStack()
                     }
                 )
