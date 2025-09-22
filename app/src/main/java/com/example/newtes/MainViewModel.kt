@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import android.widget.Toast
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -13,13 +12,12 @@ import androidx.lifecycle.ViewModel
 import com.android.volley.Request
 import com.android.volley.toolbox.JsonObjectRequest
 import com.android.volley.toolbox.Volley
-import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
 
 class MainViewModel : ViewModel() {
 
-    // --- SEMUA STATE APLIKASI TINGGAL DI SINI ---
+    // --- State Aplikasi ---
     private val _userProfile = mutableStateOf<UserProfile?>(null)
     val userProfile: State<UserProfile?> = _userProfile
 
@@ -48,7 +46,7 @@ class MainViewModel : ViewModel() {
     val hasStaleOvertime: State<Boolean> = _hasStaleOvertime
 
 
-    // --- SEMUA LOGIKA APLIKASI TINGGAL DI SINI ---
+    // --- Logika & Aksi User ---
 
     fun onFileSelected(uri: Uri?) {
         _fileUriString.value = uri?.toString()
@@ -131,24 +129,19 @@ class MainViewModel : ViewModel() {
                     _attendanceHistory.clear()
                     _attendanceHistory.addAll(records)
 
-                    val todayDateString = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date())
-                    val latestRecordToday = _attendanceHistory.firstOrNull { it.date == todayDateString }
+                    // --- LOGIKA BARU UNTUK MENDUKUNG SHIFT MALAM (ABSEN BIASA) ---
+                    val openSession = _attendanceHistory.firstOrNull { it.clockOut == "--:--:--" }
 
-                    if (latestRecordToday != null) {
-                        if (latestRecordToday.clockOut == "--:--:--") {
-                            _attendanceStatus.value = "Hadir - Masuk pukul ${latestRecordToday.clockIn}"
-                            _isClockedIn.value = true
-                            _isClockedOut.value = false
-                        } else {
-                            _attendanceStatus.value = "Anda sudah absen hari ini."
-                            _isClockedIn.value = true
-                            _isClockedOut.value = true
-                        }
+                    if (openSession != null) {
+                        _attendanceStatus.value = "Hadir - Masuk pukul ${openSession.clockIn} (${openSession.day}, ${openSession.date})"
+                        _isClockedIn.value = true
+                        _isClockedOut.value = false
                     } else {
                         _attendanceStatus.value = "Belum Absen Hari Ini"
                         _isClockedIn.value = false
                         _isClockedOut.value = false
                     }
+
                 } catch (e: Exception) { Log.e("ViewModel", "Parse Error Uhistori: ${e.message}") }
             },
             { error -> Log.e("ViewModel", "API Error Uhistori: ${error.message}") }
@@ -186,35 +179,21 @@ class MainViewModel : ViewModel() {
                     _lemburHistory.clear()
                     _lemburHistory.addAll(records)
 
-                    val todayDateString = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date())
+                    // --- LOGIKA BARU UNTUK MENDUKUNG SHIFT MALAM (LEMBUR) ---
+                    val openLemburSession = _lemburHistory.firstOrNull { it.clockOut == "--:--:--" }
 
-                    // Cek Sesi Lembur Kemarin yang Nyangkut
-                    val staleRecord = _lemburHistory.firstOrNull {
-                        it.clockOut == "--:--:--" && it.date != todayDateString
-                    }
-
-                    if (staleRecord != null) {
-                        _hasStaleOvertime.value = true
-                    } else {
+                    if (openLemburSession != null) {
+                        _lemburStatus.value = "Lembur - Masuk pukul ${openLemburSession.clockIn}"
+                        _isLemburClockedIn.value = true
+                        _isLemburClockedOut.value = false
                         _hasStaleOvertime.value = false
-                        val latestRecordToday = _lemburHistory.firstOrNull { it.date == todayDateString }
-
-                        if (latestRecordToday != null) {
-                            if (latestRecordToday.clockOut == "--:--:--") {
-                                _lemburStatus.value = "Lembur - Masuk pukul ${latestRecordToday.clockIn}"
-                                _isLemburClockedIn.value = true
-                                _isLemburClockedOut.value = false
-                            } else {
-                                _lemburStatus.value = "Anda sudah selesai lembur hari ini."
-                                _isLemburClockedIn.value = true
-                                _isLemburClockedOut.value = true
-                            }
-                        } else {
-                            _lemburStatus.value = "Belum Lembur Hari Ini"
-                            _isLemburClockedIn.value = false
-                            _isLemburClockedOut.value = false
-                        }
+                    } else {
+                        _lemburStatus.value = "Belum Lembur Hari Ini"
+                        _isLemburClockedIn.value = false
+                        _isLemburClockedOut.value = false
+                        _hasStaleOvertime.value = false
                     }
+
                 } catch (e: Exception) { Log.e("ViewModel", "Parse Error Lembur History: ${e.message}") }
             },
             { error -> Log.e("ViewModel", "API Error Lembur History: ${error.message}") }
