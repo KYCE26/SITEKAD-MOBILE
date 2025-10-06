@@ -24,7 +24,7 @@ interface ApiService {
 
 // Object untuk membuat instance Retrofit (singleton)
 object RetrofitClient {
-    private const val BASE_URL = "http://202.138.248.93:10084/"
+    private const val BASE_URL = "http://202.138.248.93:11084/v1/"
 
     val instance: ApiService by lazy {
         val retrofit = Retrofit.Builder()

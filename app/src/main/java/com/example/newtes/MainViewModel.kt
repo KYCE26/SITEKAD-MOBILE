@@ -17,11 +17,13 @@ import java.util.*
 
 class MainViewModel : ViewModel() {
 
+    // Base URL agar konsisten dan mudah diubah
+    private val apiBaseUrl = "http://202.138.248.93:11084/v1/api"
+
     // --- State Aplikasi ---
     private val _userProfile = mutableStateOf<UserProfile?>(null)
     val userProfile: State<UserProfile?> = _userProfile
 
-    // State Absen Biasa
     private val _attendanceStatus = mutableStateOf("Memuat...")
     val attendanceStatus: State<String> = _attendanceStatus
     private val _isClockedIn = mutableStateOf(false)
@@ -31,7 +33,6 @@ class MainViewModel : ViewModel() {
     private val _attendanceHistory = mutableStateListOf<AttendanceRecord>()
     val attendanceHistory: List<AttendanceRecord> = _attendanceHistory
 
-    // State Lembur
     private val _lemburStatus = mutableStateOf("Memuat...")
     val lemburStatus: State<String> = _lemburStatus
     private val _isLemburClockedIn = mutableStateOf(false)
@@ -44,7 +45,6 @@ class MainViewModel : ViewModel() {
     val fileUriString: State<String?> = _fileUriString
     private val _hasStaleOvertime = mutableStateOf(false)
     val hasStaleOvertime: State<Boolean> = _hasStaleOvertime
-
 
     // --- Logika & Aksi User ---
 
@@ -76,7 +76,7 @@ class MainViewModel : ViewModel() {
     }
 
     private fun fetchUserProfile(queue: com.android.volley.RequestQueue, token: String?) {
-        val url = "http://202.138.248.93:10084/api/profile"
+        val url = "$apiBaseUrl/profile"
         val request = object : JsonObjectRequest(
             Request.Method.GET, url, null,
             { response ->
@@ -106,7 +106,7 @@ class MainViewModel : ViewModel() {
     }
 
     private fun fetchAttendanceHistory(queue: com.android.volley.RequestQueue, token: String?) {
-        val url = "http://202.138.248.93:10084/api/uhistori"
+        val url = "$apiBaseUrl/uhistori"
         val request = object : JsonObjectRequest(
             Request.Method.GET, url, null,
             { response ->
@@ -129,7 +129,6 @@ class MainViewModel : ViewModel() {
                     _attendanceHistory.clear()
                     _attendanceHistory.addAll(records)
 
-                    // --- LOGIKA BARU UNTUK MENDUKUNG SHIFT MALAM (ABSEN BIASA) ---
                     val openSession = _attendanceHistory.firstOrNull { it.clockOut == "--:--:--" }
 
                     if (openSession != null) {
@@ -156,7 +155,7 @@ class MainViewModel : ViewModel() {
     }
 
     private fun fetchLemburHistory(queue: com.android.volley.RequestQueue, token: String?) {
-        val url = "http://202.138.248.93:10084/api/lembur/history"
+        val url = "$apiBaseUrl/lembur/history"
         val request = object : JsonObjectRequest(
             Request.Method.GET, url, null,
             { response ->
@@ -179,21 +178,18 @@ class MainViewModel : ViewModel() {
                     _lemburHistory.clear()
                     _lemburHistory.addAll(records)
 
-                    // --- LOGIKA BARU UNTUK MENDUKUNG SHIFT MALAM (LEMBUR) ---
+                    // --- LOGIKA DIKEMBALIKAN KE VERSI SIMPEL ---
                     val openLemburSession = _lemburHistory.firstOrNull { it.clockOut == "--:--:--" }
 
                     if (openLemburSession != null) {
                         _lemburStatus.value = "Lembur - Masuk pukul ${openLemburSession.clockIn}"
                         _isLemburClockedIn.value = true
                         _isLemburClockedOut.value = false
-                        _hasStaleOvertime.value = false
                     } else {
                         _lemburStatus.value = "Belum Lembur Hari Ini"
                         _isLemburClockedIn.value = false
                         _isLemburClockedOut.value = false
-                        _hasStaleOvertime.value = false
                     }
-
                 } catch (e: Exception) { Log.e("ViewModel", "Parse Error Lembur History: ${e.message}") }
             },
             { error -> Log.e("ViewModel", "API Error Lembur History: ${error.message}") }
@@ -208,14 +204,29 @@ class MainViewModel : ViewModel() {
     }
 
     private fun formatDate(dateString: String): Pair<String, String> {
-        val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
-        inputFormat.timeZone = TimeZone.getTimeZone("UTC")
+        // Format input bisa ISO 8601 atau YYYY-MM-DD HH:MM:SS
+        val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
+        isoFormat.timeZone = TimeZone.getTimeZone("UTC")
+
+        val simpleFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        simpleFormat.timeZone = TimeZone.getTimeZone("Asia/Jakarta")
+
         val outputFormatDate = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID"))
         val outputFormatDay = SimpleDateFormat("EEEE", Locale("id", "ID"))
-        return try {
-            val date = inputFormat.parse(dateString)
-            Pair(outputFormatDay.format(date!!), outputFormatDate.format(date))
+
+        val date: Date? = try {
+            isoFormat.parse(dateString)
         } catch (e: Exception) {
+            try {
+                simpleFormat.parse(dateString)
+            } catch (e2: Exception) {
+                null
+            }
+        }
+
+        return if (date != null) {
+            Pair(outputFormatDay.format(date), outputFormatDate.format(date))
+        } else {
             Pair("", "")
         }
     }

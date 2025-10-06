@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -53,6 +54,21 @@ enum class AuthState {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // --- PERUBAHAN UTAMA DI SINI ---
+        // 1. Cek apaka
+        val sharedPreferences = getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+        val token = sharedPreferences.getString("jwt_token", null)
+
+        // 2. Jika token ada dan tidak kosong, langsung ke Home
+        if (token != null && token.isNotEmpty()) {
+            val intent = Intent(this, HomeActivity::class.java)
+            startActivity(intent)
+            finish() // Tutup MainActivity agar tidak bisa kembali ke sini
+            return   // Hentikan eksekusi lebih lanjut
+        }
+
+        // 3. Jika tidak ada token, baru tampilkan halaman login/registrasi
         setContent {
             NewTesTheme {
                 SitekadAuthScreen()
@@ -85,7 +101,7 @@ fun SitekadAuthScreen() {
                 .fillMaxSize()
                 .padding(horizontal = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceAround // Memberi ruang atas dan bawah
+            verticalArrangement = Arrangement.SpaceAround
         ) {
             // Bagian atas (Logo dan Judul)
             item {
@@ -124,11 +140,9 @@ fun SitekadAuthScreen() {
                     targetState = authState,
                     transitionSpec = {
                         if (targetState.ordinal > initialState.ordinal) {
-                            // Masuk dari kanan, keluar ke kiri
                             slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(400)) togetherWith
                                     slideOutHorizontally(targetOffsetX = { -it }, animationSpec = tween(400))
                         } else {
-                            // Masuk dari kiri, keluar ke kanan
                             slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(400)) togetherWith
                                     slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(400))
                         }
@@ -242,7 +256,7 @@ fun LoginForm(onBackClick: () -> Unit) {
             Button(
                 onClick = {
                     isLoading = true
-                    val url = "http://202.138.248.93:10084/login"
+                    val url = "http://202.138.248.93:11084/v1/login"
 
                     val stringRequest = object : StringRequest(
                         Method.POST, url,
@@ -259,7 +273,7 @@ fun LoginForm(onBackClick: () -> Unit) {
                                 }
                                 val intent = Intent(context, HomeActivity::class.java)
                                 context.startActivity(intent)
-                                (context as? Activity)?.finish() // Menutup activity login
+                                (context as? Activity)?.finish()
                             } catch (e: Exception) {
                                 isLoading = false
                                 Toast.makeText(context, "Gagal memproses data dari server", Toast.LENGTH_LONG).show()
@@ -333,7 +347,7 @@ fun RegisterForm(onBackClick: () -> Unit, onRegisterSuccess: () -> Unit) {
             Button(
                 onClick = {
                     isLoading = true
-                    val url = "http://202.138.248.93:10084/aktivasi"
+                    val url = "http://202.138.248.93:11084/v1/aktivasi"
 
                     val stringRequest = object: StringRequest(
                         Method.POST, url,
@@ -351,9 +365,12 @@ fun RegisterForm(onBackClick: () -> Unit, onRegisterSuccess: () -> Unit) {
                         override fun getBodyContentType() = "application/json; charset=utf-8"
                         override fun getBody(): ByteArray {
                             val jsonBody = JSONObject()
+                            val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+
                             jsonBody.put("NITAD", fullname)
                             jsonBody.put("username", username)
                             jsonBody.put("password", password)
+                            jsonBody.put("android_id", androidId)
                             return jsonBody.toString().toByteArray(Charsets.UTF_8)
                         }
                     }

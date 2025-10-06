@@ -568,7 +568,7 @@ fun ConfirmationScreen(
                         }
 
                     } else {
-                        val url = if (attendanceType == "out-lembur") "http://202.138.248.93:10084/api/lembur/end" else "http://202.138.248.93:10084/api/absensi"
+                        val url = if (attendanceType == "out-lembur") "http://202.138.248.93:11084/v1/api/lembur/end" else "http://202.138.248.93:11084/v1/api/absensi"
                         val method = if (attendanceType == "out-lembur") Request.Method.PUT else Request.Method.POST
                         val requestQueue = Volley.newRequestQueue(context)
                         val stringRequest = object : StringRequest(method, url,
