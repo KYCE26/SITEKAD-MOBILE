@@ -26,7 +26,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -102,6 +104,8 @@ sealed class Screen(val route: String) {
     object Home : Screen("home_main")
     object Lembur : Screen("lembur")
     object Profile : Screen("profile")
+    // Tambahkan object baru di sini
+    object PengajuanCuti : Screen("pengajuan_cuti")
     object ConfirmAttendance : Screen("confirm_attendance/{scanResult}/{attendanceType}") {
         fun createRoute(scanResult: String, attendanceType: String): String {
             val encodedResult = URLEncoder.encode(scanResult, StandardCharsets.UTF_8.toString())
@@ -252,6 +256,9 @@ fun MainAppScreen(viewModel: MainViewModel = viewModel()) {
             composable(Screen.Profile.route) {
                 ProfileScreen(userProfile = userProfile, onLogoutClick = { viewModel.doLogout(context) })
             }
+            composable(Screen.PengajuanCuti.route) {
+                PengajuanCutiScreen(navController = navController)
+            }
         }
     }
 }
@@ -293,6 +300,10 @@ fun HomeScreenContent(
             }
             item {
                 ClockSection(navController, attendanceStatus, isClockedIn, isClockedOut, isLembur = false)
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+            item {
+                CutiCard(onClick = { navController.navigate(Screen.PengajuanCuti.route) })
                 Spacer(modifier = Modifier.height(24.dp))
             }
             item {
@@ -946,6 +957,208 @@ fun HistoryItem(record: AttendanceRecord) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                 )
+            }
+        }
+    }
+}
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CutiCard(onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.EventAvailable,
+                contentDescription = "Cuti Icon",
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape)
+                    .padding(8.dp),
+                tint = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Pengajuan Cuti",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Ajukan cuti dengan melampirkan surat",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "Go to Cuti",
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PengajuanCutiScreen(navController: NavHostController) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    // --- State untuk field-field baru ---
+    var alasan by remember { mutableStateOf("") }
+    var deskripsi by remember { mutableStateOf("") }
+    var fileUri by remember { mutableStateOf<Uri?>(null) }
+    var isAlasanExpanded by remember { mutableStateOf(false) }
+    val daftarAlasan = listOf("Sakit", "Cuti Tahunan", "Keperluan Mendesak", "Lainnya")
+
+    var isLoading by remember { mutableStateOf(false) }
+
+    // Launcher untuk memilih gambar
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+        onResult = { uri: Uri? -> fileUri = uri }
+    )
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Pengajuan Cuti") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        // Kita gunakan LazyColumn agar bisa di-scroll jika field-nya banyak
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+
+            // --- Field Alasan (Dropdown) ---
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                ExposedDropdownMenuBox(
+                    expanded = isAlasanExpanded,
+                    onExpandedChange = { isAlasanExpanded = !isAlasanExpanded },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = alasan,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Alasan Cuti *") },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = isAlasanExpanded)
+                        },
+                        colors = sitekadTextFieldColors(), // Pakai warna konsisten
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = isAlasanExpanded,
+                        onDismissRequest = { isAlasanExpanded = false }
+                    ) {
+                        daftarAlasan.forEach { item ->
+                            DropdownMenuItem(
+                                text = { Text(item) },
+                                onClick = {
+                                    alasan = item
+                                    isAlasanExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // --- Field Deskripsi (Opsional) ---
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = deskripsi,
+                    onValueChange = { deskripsi = it },
+                    label = { Text("Deskripsi (Opsional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = sitekadTextFieldColors(),
+                    minLines = 3 // Bikin lebih tinggi
+                )
+            }
+
+            // --- Field Foto (Opsional) ---
+            item {
+                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    "Foto Pendukung (Opsional)",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                // Menggunakan kembali FilePickerBox
+                FilePickerBox(
+                    fileUri = fileUri,
+                    onClick = { imagePickerLauncher.launch("image/*") },
+                    onClearImage = { fileUri = null }
+                )
+            }
+
+            // --- Tombol Kirim ---
+            item {
+                Spacer(modifier = Modifier.height(32.dp))
+                Button(
+                    onClick = {
+                        // Validasi HANYA pada 'alasan'
+                        if (alasan.isEmpty()) {
+                            Toast.makeText(context, "Harap pilih alasan cuti terlebih dahulu", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+
+                        isLoading = true
+
+                        // --- Logika Mock Diperbarui ---
+                        coroutineScope.launch {
+                            delay(2000) // delay 2 detik
+
+                            // Siapkan pesan log untuk Toast
+                            val waktuSekarang = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                            val fotoStatus = if (fileUri != null) "Ada" else "Tidak Ada"
+                            val logMessage = "Sukses!\nAlasan: $alasan\nWaktu: $waktuSekarang\nFoto: $fotoStatus"
+
+                            isLoading = false
+                            Toast.makeText(context, logMessage, Toast.LENGTH_LONG).show()
+                            navController.popBackStack()
+                        }
+                        // --- Logika Mock Selesai ---
+                    },
+                    enabled = !isLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color.White)
+                    } else {
+                        Text("AJUKAN CUTI", fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.height(32.dp))
             }
         }
     }

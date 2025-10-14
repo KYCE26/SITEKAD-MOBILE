@@ -50,7 +50,7 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.2.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("androidx.navigation:navigation-compose:2.7.7")
-    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.compose.material:material-icons-extended-android:1.6.7")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
