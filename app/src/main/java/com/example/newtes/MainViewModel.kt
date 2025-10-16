@@ -17,7 +17,6 @@ import java.util.*
 
 class MainViewModel : ViewModel() {
 
-    // Base URL agar konsisten dan mudah diubah
     private val apiBaseUrl = "http://202.138.248.93:11084/v1/api"
 
     // --- State Aplikasi ---
@@ -105,6 +104,7 @@ class MainViewModel : ViewModel() {
         queue.add(request)
     }
 
+    // --- FUNGSI INI DIROMBAK TOTAL UNTUK MEMPERBAIKI LOGIKA ABSENSI ---
     private fun fetchAttendanceHistory(queue: com.android.volley.RequestQueue, token: String?) {
         val url = "$apiBaseUrl/uhistori"
         val request = object : JsonObjectRequest(
@@ -129,13 +129,36 @@ class MainViewModel : ViewModel() {
                     _attendanceHistory.clear()
                     _attendanceHistory.addAll(records)
 
-                    val openSession = _attendanceHistory.firstOrNull { it.clockOut == "--:--:--" }
+                    // --- LOGIKA BARU UNTUK MENENTUKAN STATUS ABSEN ---
 
-                    if (openSession != null) {
-                        _attendanceStatus.value = "Hadir - Masuk pukul ${openSession.clockIn} (${openSession.day}, ${openSession.date})"
-                        _isClockedIn.value = true
-                        _isClockedOut.value = false
+                    // 1. Dapatkan tanggal hari ini dengan format yang sama seperti di riwayat
+                    val todayDate = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(Date())
+
+                    // 2. Cari sesi yang 'nyangkut' dari hari sebelumnya (lupa clock-out)
+                    val staleSession = records.firstOrNull { it.clockOut == "--:--:--" && it.date != todayDate }
+
+                    // 3. Cari sesi untuk hari ini (bisa sudah selesai atau masih berjalan)
+                    val todaySession = records.firstOrNull { it.date == todayDate }
+
+                    if (staleSession != null) {
+                        // KASUS 1: Ada sesi dari hari lalu yang belum ditutup. Paksa Clock Out.
+                        _attendanceStatus.value = "Anda belum Clock Out dari ${staleSession.day}, ${staleSession.date}"
+                        _isClockedIn.value = true // Anggap sudah clocked-in agar tombol Clock-In mati
+                        _isClockedOut.value = false // dan tombol Clock-Out hidup
+                    } else if (todaySession != null) {
+                        if (todaySession.clockOut != "--:--:--") {
+                            // KASUS 2: Absen hari ini sudah selesai (sudah clock-in & clock-out).
+                            _attendanceStatus.value = "Anda sudah absen hari ini."
+                            _isClockedIn.value = true
+                            _isClockedOut.value = true // Ini akan menonaktifkan kedua tombol
+                        } else {
+                            // KASUS 3: Sudah clock-in hari ini, tapi belum clock-out.
+                            _attendanceStatus.value = "Hadir - Masuk pukul ${todaySession.clockIn}"
+                            _isClockedIn.value = true
+                            _isClockedOut.value = false
+                        }
                     } else {
+                        // KASUS 4: Belum absen sama sekali hari ini.
                         _attendanceStatus.value = "Belum Absen Hari Ini"
                         _isClockedIn.value = false
                         _isClockedOut.value = false
@@ -153,6 +176,7 @@ class MainViewModel : ViewModel() {
         }
         queue.add(request)
     }
+    // -----------------------------------------------------------------
 
     private fun fetchLemburHistory(queue: com.android.volley.RequestQueue, token: String?) {
         val url = "$apiBaseUrl/lembur/history"
@@ -178,7 +202,6 @@ class MainViewModel : ViewModel() {
                     _lemburHistory.clear()
                     _lemburHistory.addAll(records)
 
-                    // --- LOGIKA DIKEMBALIKAN KE VERSI SIMPEL ---
                     val openLemburSession = _lemburHistory.firstOrNull { it.clockOut == "--:--:--" }
 
                     if (openLemburSession != null) {
@@ -204,7 +227,6 @@ class MainViewModel : ViewModel() {
     }
 
     private fun formatDate(dateString: String): Pair<String, String> {
-        // Format input bisa ISO 8601 atau YYYY-MM-DD HH:MM:SS
         val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.getDefault())
         isoFormat.timeZone = TimeZone.getTimeZone("UTC")
 
