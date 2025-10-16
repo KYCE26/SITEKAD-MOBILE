@@ -82,6 +82,8 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 
 data class UserProfile(
     val username: String = "...",
@@ -131,6 +133,17 @@ fun MainAppScreen(viewModel: MainViewModel = viewModel()) {
     val navController = rememberNavController()
     val context = LocalContext.current
 
+    // --- LOGIKA TEMA DIMASUKKAN DI SINI ---
+    // 1. Baca status tema dari SharedPreferences
+    val isDarkTheme = remember { mutableStateOf(ThemeManager.getTheme(context)) }
+
+    // 2. Buat fungsi untuk mengubah dan menyimpan tema
+    val onThemeChange: (Boolean) -> Unit = { isDark ->
+        isDarkTheme.value = isDark
+        ThemeManager.saveTheme(context, isDark)
+    }
+    // ------------------------------------
+
     // Ambil semua state dari ViewModel
     val userProfile by viewModel.userProfile
     val attendanceStatus by viewModel.attendanceStatus
@@ -167,97 +180,106 @@ fun MainAppScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 5.dp) {
-                val navBackStackEntry by navController.currentBackStackEntryAsState()
-                val currentRoute = navBackStackEntry?.destination?.route
-                bottomNavItems.forEach { item ->
-                    NavigationBarItem(
-                        selected = currentRoute == item.route,
-                        onClick = {
-                            navController.navigate(item.route) {
-                                popUpTo(navController.graph.startDestinationId) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
+    // --- SELURUH UI DIBUNGKUS DENGAN NewTesTheme ---
+    NewTesTheme(darkTheme = isDarkTheme.value) {
+        Scaffold(
+            bottomBar = {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 5.dp) {
+                    val navBackStackEntry by navController.currentBackStackEntryAsState()
+                    val currentRoute = navBackStackEntry?.destination?.route
+                    bottomNavItems.forEach { item ->
+                        NavigationBarItem(
+                            selected = currentRoute == item.route,
+                            onClick = {
+                                navController.navigate(item.route) {
+                                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            icon = {
+                                when (item) {
+                                    is Screen.Home -> Icon(Icons.Filled.Home, "Home")
+                                    is Screen.Lembur -> Icon(Icons.Filled.Notifications, "Lembur")
+                                    is Screen.Profile -> Icon(Icons.Filled.Person, "Profile")
+                                    else -> {}
+                                }
+                            },
+                            label = {
+                                when (item) {
+                                    is Screen.Home -> Text("Home")
+                                    is Screen.Lembur -> Text("Lembur")
+                                    is Screen.Profile -> Text("Profile")
+                                    else -> {}
+                                }
                             }
-                        },
-                        icon = {
-                            when (item) {
-                                is Screen.Home -> Icon(Icons.Filled.Home, "Home")
-                                is Screen.Lembur -> Icon(Icons.Filled.Notifications, "Lembur")
-                                is Screen.Profile -> Icon(Icons.Filled.Person, "Profile")
-                                else -> {} // <-- TAMBAHKAN INI
-                            }
-                        },
-                        label = {
-                            when (item) {
-                                is Screen.Home -> Text("Home")
-                                is Screen.Lembur -> Text("Lembur")
-                                is Screen.Profile -> Text("Profile")
-                                else -> {} // <-- TAMBAHKAN INI JUGA
-                            }
+                        )
+                    }
+                }
+            }
+        ) { paddingValues ->
+            NavHost(
+                navController = navController,
+                startDestination = Screen.Home.route,
+                modifier = Modifier.padding(paddingValues)
+            ) {
+                composable(Screen.Home.route) {
+                    HomeScreenContent(
+                        userProfile = userProfile,
+                        navController = navController,
+                        attendanceStatus = attendanceStatus,
+                        isClockedIn = isClockedIn,
+                        isClockedOut = isClockedOut,
+                        history = attendanceHistory.toMutableList(),
+                        onLogoutClick = { viewModel.doLogout(context) }
+                    )
+                }
+                composable(
+                    route = Screen.ConfirmAttendance.route,
+                    arguments = listOf(
+                        navArgument("scanResult") { type = NavType.StringType },
+                        navArgument("attendanceType") { type = NavType.StringType }
+                    )
+                ) { backStackEntry ->
+                    val scanResult = URLDecoder.decode(backStackEntry.arguments?.getString("scanResult") ?: "", StandardCharsets.UTF_8.toString())
+                    val attendanceType = backStackEntry.arguments?.getString("attendanceType") ?: "in"
+                    ConfirmationScreen(
+                        navController = navController,
+                        qrCodeId = scanResult,
+                        attendanceType = attendanceType,
+                        fileUriString = fileUriString,
+                        onConfirm = { _, _ ->
+                            viewModel.fetchData(context)
+                            navController.popBackStack()
                         }
                     )
                 }
-            }
-        }
-    ) { paddingValues ->
-        NavHost(
-            navController = navController,
-            startDestination = Screen.Home.route,
-            modifier = Modifier.padding(paddingValues)
-        ) {
-            composable(Screen.Home.route) {
-                HomeScreenContent(
-                    userProfile = userProfile,
-                    navController = navController,
-                    attendanceStatus = attendanceStatus,
-                    isClockedIn = isClockedIn,
-                    isClockedOut = isClockedOut,
-                    history = attendanceHistory.toMutableList(),
-                    onLogoutClick = { viewModel.doLogout(context) }
-                )
-            }
-            composable(
-                route = Screen.ConfirmAttendance.route,
-                arguments = listOf(
-                    navArgument("scanResult") { type = NavType.StringType },
-                    navArgument("attendanceType") { type = NavType.StringType }
-                )
-            ) { backStackEntry ->
-                val scanResult = URLDecoder.decode(backStackEntry.arguments?.getString("scanResult") ?: "", StandardCharsets.UTF_8.toString())
-                val attendanceType = backStackEntry.arguments?.getString("attendanceType") ?: "in"
-                ConfirmationScreen(
-                    navController = navController,
-                    qrCodeId = scanResult,
-                    attendanceType = attendanceType,
-                    fileUriString = fileUriString,
-                    onConfirm = { _, _ ->
-                        viewModel.fetchData(context) // Refresh data setelah aksi
-                        navController.popBackStack()
-                    }
-                )
-            }
-            composable(Screen.Lembur.route) {
-                LemburScreen(
-                    userProfile = userProfile,
-                    navController = navController,
-                    lemburStatus = lemburStatus,
-                    isLemburClockedIn = isLemburClockedIn,
-                    isLemburClockedOut = isLemburClockedOut,
-                    history = lemburHistory.toMutableList(),
-                    fileUriString = fileUriString,
-                    onFileSelected = viewModel::onFileSelected,
-                    onLogoutClick = { viewModel.doLogout(context) },
-                    onClearFile = viewModel::onClearFile
-                )
-            }
-            composable(Screen.Profile.route) {
-                ProfileScreen(userProfile = userProfile, onLogoutClick = { viewModel.doLogout(context) })
-            }
-            composable(Screen.PengajuanCuti.route) {
-                PengajuanCutiScreen(navController = navController)
+                composable(Screen.Lembur.route) {
+                    LemburScreen(
+                        userProfile = userProfile,
+                        navController = navController,
+                        lemburStatus = lemburStatus,
+                        isLemburClockedIn = isLemburClockedIn,
+                        isLemburClockedOut = isLemburClockedOut,
+                        history = lemburHistory.toMutableList(),
+                        fileUriString = fileUriString,
+                        onFileSelected = viewModel::onFileSelected,
+                        onLogoutClick = { viewModel.doLogout(context) },
+                        onClearFile = viewModel::onClearFile
+                    )
+                }
+                composable(Screen.Profile.route) {
+                    // --- PARAMETER TEMA DIKIRIM KE PROFILESCREEN ---
+                    ProfileScreen(
+                        userProfile = userProfile,
+                        onLogoutClick = { viewModel.doLogout(context) },
+                        isDarkTheme = isDarkTheme.value,
+                        onThemeChange = onThemeChange
+                    )
+                }
+                composable(Screen.PengajuanCuti.route) {
+                    PengajuanCutiScreen(navController = navController)
+                }
             }
         }
     }
@@ -749,7 +771,13 @@ fun LemburScreen(
 }
 
 @Composable
-fun ProfileScreen(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
+fun ProfileScreen(
+    userProfile: UserProfile?,
+    onLogoutClick: () -> Unit,
+    // --- TAMBAHKAN DUA PARAMETER INI ---
+    isDarkTheme: Boolean,
+    onThemeChange: (Boolean) -> Unit
+) {
     MainScreenBackground {
         Column(
             modifier = Modifier
@@ -787,6 +815,38 @@ fun ProfileScreen(userProfile: UserProfile?, onLogoutClick: () -> Unit) {
                         ProfileInfoItem(icon = Icons.Filled.Business, label = "Cabang", value = userProfile.cabang)
                         Divider(modifier = Modifier.padding(horizontal = 16.dp))
                         ProfileInfoItem(icon = Icons.Filled.LocationOn, label = "Lokasi", value = userProfile.lokasi)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Mode Gelap",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Switch(
+                            checked = isDarkTheme,
+                            onCheckedChange = onThemeChange,
+                            thumbContent = {
+                                Icon(
+                                    imageVector = if (isDarkTheme) Icons.Filled.DarkMode else Icons.Filled.LightMode,
+                                    contentDescription = "Theme Icon",
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
                     }
                 }
 
