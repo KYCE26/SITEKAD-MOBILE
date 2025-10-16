@@ -16,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
@@ -43,6 +44,11 @@ import com.android.volley.toolbox.Volley
 import com.example.newtes.ui.theme.NewTesTheme
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 
 // Enum untuk menentukan state tampilan
 enum class AuthState {
@@ -217,6 +223,8 @@ fun LoginForm(onBackClick: () -> Unit) {
     val context = LocalContext.current
     var isLoading by remember { mutableStateOf(false) }
     val requestQueue = remember { Volley.newRequestQueue(context) }
+    val passwordRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -238,20 +246,33 @@ fun LoginForm(onBackClick: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = "Username Icon") },
-                colors = sitekadTextFieldColors()
+                colors = sitekadTextFieldColors(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), // Ubah jadi "Next"
+                keyboardActions = KeyboardActions(onNext = {
+                    focusManager.moveFocus(FocusDirection.Down) // Pindah ke password
+                })
             )
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedTextField(
                 value = password,
                 onValueChange = { password = it },
                 label = { Text("Password") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(passwordRequester), // Terapkan requester
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Password Icon") },
                 visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Done // Ubah jadi "Done"
+                ),
+                keyboardActions = KeyboardActions(onDone = {
+                    focusManager.clearFocus() // Sembunyikan keyboard
+                }),
                 colors = sitekadTextFieldColors()
             )
+
             Spacer(modifier = Modifier.height(24.dp))
             Button(
                 onClick = {
@@ -324,6 +345,8 @@ fun RegisterForm(onBackClick: () -> Unit, onRegisterSuccess: () -> Unit) {
     val context = LocalContext.current
     var isLoading by remember { mutableStateOf(false) }
     val requestQueue = remember { Volley.newRequestQueue(context) }
+    val (nitadRequester, usernameRequester, passwordRequester) = remember { FocusRequester.createRefs() }
+    val focusManager = LocalFocusManager.current
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -338,11 +361,55 @@ fun RegisterForm(onBackClick: () -> Unit, onRegisterSuccess: () -> Unit) {
             Text("Buat Akun Baru", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(24.dp))
 
-            OutlinedTextField(value = fullname, onValueChange = { fullname = it }, label = { Text("NITAD") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = sitekadTextFieldColors())
+            OutlinedTextField(
+                value = fullname,
+                onValueChange = { fullname = it },
+                label = { Text("NITAD") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(nitadRequester), // Terapkan requester
+                singleLine = true,
+                colors = sitekadTextFieldColors(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), // Ubah tombol enter menjadi "Next"
+                keyboardActions = KeyboardActions(onNext = {
+                    focusManager.moveFocus(FocusDirection.Down) // Pindah fokus ke bawah
+                })
+            )
             Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = sitekadTextFieldColors())
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("Username") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(usernameRequester), // Terapkan requester
+                singleLine = true,
+                colors = sitekadTextFieldColors(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), // Ubah tombol enter menjadi "Next"
+                keyboardActions = KeyboardActions(onNext = {
+                    focusManager.moveFocus(FocusDirection.Down) // Pindah fokus ke bawah
+                })
+            )
             Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), colors = sitekadTextFieldColors())
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Password") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(passwordRequester), // Terapkan requester
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Done // Ubah tombol enter menjadi "Done"
+                ),
+                keyboardActions = KeyboardActions(onDone = {
+                    focusManager.clearFocus() // Sembunyikan keyboard
+                }),
+                colors = sitekadTextFieldColors()
+            )
+
             Spacer(modifier = Modifier.height(24.dp))
             Button(
                 onClick = {
