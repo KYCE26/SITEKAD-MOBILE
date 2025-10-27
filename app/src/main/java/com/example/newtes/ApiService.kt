@@ -20,11 +20,37 @@ interface ApiService {
         @Part("android_id") androidId: RequestBody,
         @Part("kodeqr") kodeqr: RequestBody
     ): Response<LemburResponse>
+
+    // --- TAMBAHKAN FUNGSI BARU INI UNTUK CUTI ---
+    @Multipart
+    @POST("api/cuti") // Sesuaikan path-nya jika berbeda
+    suspend fun submitCuti(
+        @Header("Authorization") token: String,
+        @Part("alasan") alasan: RequestBody,
+        @Part("tanggal_mulai") tanggalMulai: RequestBody,
+        @Part("tanggal_selesai") tanggalSelesai: RequestBody,
+        @Part("keterangan") keterangan: RequestBody,
+        @Part suket: MultipartBody.Part? // Dibuat nullable, karena file 'suket' opsional
+    ): Response<LemburResponse> // Kita pakai ulang LemburResponse karena strukturnya mirip
 }
 
-// Object untuk membuat instance Retrofit (singleton)
+// Object untuk membuat instance Retrofit (singleton) - PORT 11084 (Lama)
 object RetrofitClient {
     private const val BASE_URL = "http://202.138.248.93:11084/v1/"
+
+    val instance: ApiService by lazy {
+        val retrofit = Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+        retrofit.create(ApiService::class.java)
+    }
+}
+
+// --- TAMBAHKAN OBJECT BARU INI UNTUK CUTI (PORT 10084) ---
+object RetrofitClientCuti {
+    // Pastikan IP dan /v1/ nya sudah benar
+    private const val BASE_URL = "http://202.138.248.93:10084/v1/"
 
     val instance: ApiService by lazy {
         val retrofit = Retrofit.Builder()

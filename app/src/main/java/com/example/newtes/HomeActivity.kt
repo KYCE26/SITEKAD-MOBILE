@@ -31,6 +31,11 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -705,7 +710,8 @@ fun LemburScreen(
                             if (fileUri == null) imagePickerLauncher.launch("image/*")
                             else showImagePreviewDialog = true
                         },
-                        onClearImage = onClearFile
+                        onClearImage = onClearFile,
+                        promptText = "Klik untuk memilih gambar SPL" // <-- KIRIM TEKS UNTUK LEMBUR
                     )
                 }
 
@@ -886,7 +892,8 @@ fun ProfileInfoItem(icon: ImageVector, label: String, value: String) {
 fun FilePickerBox(
     fileUri: Uri?,
     onClick: () -> Unit,
-    onClearImage: () -> Unit
+    onClearImage: () -> Unit,
+    promptText: String // Parameter baru untuk teks
 ) {
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -897,33 +904,54 @@ fun FilePickerBox(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(200.dp)
-                .clickable(onClick = onClick)
+                .clickable(onClick = onClick) // Box ini yang bisa diklik
         ) {
+            // Kondisi jika belum ada file dipilih
             if (fileUri == null || fileUri.toString().isEmpty()) {
                 Column(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Icon(imageVector = Icons.Filled.CloudUpload, contentDescription = "Upload Icon", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
+                    Icon(
+                        imageVector = Icons.Filled.CloudUpload,
+                        contentDescription = "Upload Icon",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(48.dp)
+                    )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Klik untuk memilih gambar SPL", color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center)
+                    // Menggunakan parameter promptText
+                    Text(
+                        text = promptText, // Teks diambil dari parameter
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center
+                    )
                 }
-            } else {
+            }
+            // Kondisi jika file sudah dipilih (menampilkan preview)
+            else {
                 AsyncImage(
                     model = fileUri,
-                    contentDescription = "Preview SPL",
+                    contentDescription = "Preview File", // Deskripsi dibuat lebih umum
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
+                    contentScale = ContentScale.Crop // Crop agar memenuhi Box
                 )
+                // Tombol 'X' untuk menghapus pilihan file
                 IconButton(
                     onClick = onClearImage,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
+                        .align(Alignment.TopEnd) // Posisi di kanan atas
                         .padding(8.dp)
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f), CircleShape)
+                        .background(
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.5f), // Background semi-transparan
+                            CircleShape
+                        )
                 ) {
-                    Icon(imageVector = Icons.Filled.Close, contentDescription = "Hapus Gambar", tint = MaterialTheme.colorScheme.onSurface)
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Hapus Gambar",
+                        tint = MaterialTheme.colorScheme.onSurface // Warna ikon 'X'
+                    )
                 }
             }
         }
@@ -1074,20 +1102,82 @@ fun PengajuanCutiScreen(navController: NavHostController) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    // --- State untuk field-field baru ---
+    // State untuk field-field
     var alasan by remember { mutableStateOf("") }
     var deskripsi by remember { mutableStateOf("") }
     var fileUri by remember { mutableStateOf<Uri?>(null) }
     var isAlasanExpanded by remember { mutableStateOf(false) }
     val daftarAlasan = listOf("Sakit", "Cuti Tahunan", "Keperluan Mendesak", "Lainnya")
 
+    // State untuk tanggal
+    var tanggalMulai by remember { mutableStateOf("") }
+    var tanggalSelesai by remember { mutableStateOf("") }
+    var showTglMulaiPicker by remember { mutableStateOf(false) }
+    var showTglSelesaiPicker by remember { mutableStateOf(false) }
+    val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
+
     var isLoading by remember { mutableStateOf(false) }
 
-    // Launcher untuk memilih gambar
+    // Launcher gambar
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
         onResult = { uri: Uri? -> fileUri = uri }
     )
+
+    // --- Date Picker Dialog Tanggal Mulai ---
+    if (showTglMulaiPicker) {
+        val datePickerState = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showTglMulaiPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let {
+                        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")) // Gunakan UTC
+                        cal.timeInMillis = it
+                        tanggalMulai = dateFormatter.format(cal.time)
+                    }
+                    showTglMulaiPicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTglMulaiPicker = false }) { Text("Batal") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    // --- Date Picker Dialog Tanggal Selesai ---
+    if (showTglSelesaiPicker) {
+        val datePickerState = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showTglSelesaiPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let {
+                        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")) // Gunakan UTC
+                        cal.timeInMillis = it
+                        tanggalSelesai = dateFormatter.format(cal.time)
+                    }
+                    showTglSelesaiPicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTglSelesaiPicker = false }) { Text("Batal") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    // --- PERBAIKAN: Warna custom untuk TextField tanggal yang disabled ---
+    val datePickerFieldColors = OutlinedTextFieldDefaults.colors(
+        disabledTextColor = MaterialTheme.colorScheme.onSurface,
+        disabledBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+        disabledLabelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+        disabledTrailingIconColor = MaterialTheme.colorScheme.primary // Atau warna lain yg sesuai
+    )
+    // -----------------------------------------------------------------
 
     Scaffold(
         topBar = {
@@ -1101,7 +1191,6 @@ fun PengajuanCutiScreen(navController: NavHostController) {
             )
         }
     ) { paddingValues ->
-        // Kita gunakan LazyColumn agar bisa di-scroll jika field-nya banyak
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -1109,6 +1198,46 @@ fun PengajuanCutiScreen(navController: NavHostController) {
                 .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+
+            // --- PERBAIKAN: Bungkus TextField Tanggal dengan Box ---
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    // --- Tanggal Mulai ---
+                    Box(modifier = Modifier
+                        .weight(1f)
+                        .clickable { showTglMulaiPicker = true } // Clickable di Box
+                    ) {
+                        OutlinedTextField(
+                            value = tanggalMulai,
+                            onValueChange = {},
+                            label = { Text("Tanggal Mulai *") },
+                            readOnly = true,
+                            colors = datePickerFieldColors, // Gunakan warna custom
+                            modifier = Modifier.fillMaxWidth(), // Modifier di TextField
+                            trailingIcon = { Icon(Icons.Filled.CalendarToday, contentDescription = "Pilih Tanggal Mulai") },
+                            enabled = false // <-- WAJIB false
+                        )
+                    }
+                    // --- Tanggal Selesai ---
+                    Box(modifier = Modifier
+                        .weight(1f)
+                        .clickable { showTglSelesaiPicker = true } // Clickable di Box
+                    ) {
+                        OutlinedTextField(
+                            value = tanggalSelesai,
+                            onValueChange = {},
+                            label = { Text("Tanggal Selesai *") },
+                            readOnly = true,
+                            colors = datePickerFieldColors, // Gunakan warna custom
+                            modifier = Modifier.fillMaxWidth(), // Modifier di TextField
+                            trailingIcon = { Icon(Icons.Filled.CalendarToday, contentDescription = "Pilih Tanggal Selesai") },
+                            enabled = false // <-- WAJIB false
+                        )
+                    }
+                }
+            }
+            // -------------------------------------------------------
 
             // --- Field Alasan (Dropdown) ---
             item {
@@ -1126,7 +1255,7 @@ fun PengajuanCutiScreen(navController: NavHostController) {
                         trailingIcon = {
                             ExposedDropdownMenuDefaults.TrailingIcon(expanded = isAlasanExpanded)
                         },
-                        colors = sitekadTextFieldColors(), // Pakai warna konsisten
+                        colors = sitekadTextFieldColors(),
                         modifier = Modifier
                             .fillMaxWidth()
                             .menuAnchor()
@@ -1157,7 +1286,7 @@ fun PengajuanCutiScreen(navController: NavHostController) {
                     label = { Text("Deskripsi (Opsional)") },
                     modifier = Modifier.fillMaxWidth(),
                     colors = sitekadTextFieldColors(),
-                    minLines = 3 // Bikin lebih tinggi
+                    minLines = 3
                 )
             }
 
@@ -1170,11 +1299,11 @@ fun PengajuanCutiScreen(navController: NavHostController) {
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                // Menggunakan kembali FilePickerBox
                 FilePickerBox(
                     fileUri = fileUri,
                     onClick = { imagePickerLauncher.launch("image/*") },
-                    onClearImage = { fileUri = null }
+                    onClearImage = { fileUri = null },
+                    promptText = "Klik untuk memilih Surat Keterangan" // <-- KIRIM TEKS UNTUK CUTI
                 )
             }
 
@@ -1183,28 +1312,74 @@ fun PengajuanCutiScreen(navController: NavHostController) {
                 Spacer(modifier = Modifier.height(32.dp))
                 Button(
                     onClick = {
-                        // Validasi HANYA pada 'alasan'
-                        if (alasan.isEmpty()) {
-                            Toast.makeText(context, "Harap pilih alasan cuti terlebih dahulu", Toast.LENGTH_SHORT).show()
+                        // Validasi Wajib
+                        if (alasan.isEmpty() || tanggalMulai.isEmpty() || tanggalSelesai.isEmpty()) {
+                            Toast.makeText(context, "Tanggal mulai, selesai, dan alasan wajib diisi", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
+
+                        // Validasi Urutan Tanggal
+                        try {
+                            val tglMulaiDate = dateFormatter.parse(tanggalMulai)!!
+                            val tglSelesaiDate = dateFormatter.parse(tanggalSelesai)!!
+                            if (tglSelesaiDate.before(tglMulaiDate)) {
+                                Toast.makeText(context, "Tanggal selesai tidak boleh sebelum tanggal mulai", Toast.LENGTH_LONG).show()
+                                return@Button
+                            }
+                        } catch (e: Exception) {
+                            Log.e("DatePicker", "Error parsing date: ${e.message}")
+                            Toast.makeText(context, "Format tanggal tidak valid", Toast.LENGTH_SHORT).show()
                             return@Button
                         }
 
                         isLoading = true
 
-                        // --- Logika Mock Diperbarui ---
+                        // Panggil API
                         coroutineScope.launch {
-                            delay(2000) // delay 2 detik
+                            try {
+                                val sharedPreferences = context.getSharedPreferences("SITEKAD_PREFS", Context.MODE_PRIVATE)
+                                val token = "Bearer ${sharedPreferences.getString("jwt_token", "") ?: ""}"
 
-                            // Siapkan pesan log untuk Toast
-                            val waktuSekarang = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-                            val fotoStatus = if (fileUri != null) "Ada" else "Tidak Ada"
-                            val logMessage = "Sukses!\nAlasan: $alasan\nWaktu: $waktuSekarang\nFoto: $fotoStatus"
+                                val alasanBody = alasan.toRequestBody("text/plain".toMediaTypeOrNull())
+                                val tglMulaiBody = tanggalMulai.toRequestBody("text/plain".toMediaTypeOrNull())
+                                val tglSelesaiBody = tanggalSelesai.toRequestBody("text/plain".toMediaTypeOrNull())
+                                val keteranganBody = deskripsi.toRequestBody("text/plain".toMediaTypeOrNull())
 
-                            isLoading = false
-                            Toast.makeText(context, logMessage, Toast.LENGTH_LONG).show()
-                            navController.popBackStack()
+                                val filePart: MultipartBody.Part? = fileUri?.let { uri ->
+                                    val inputStream = context.contentResolver.openInputStream(uri)
+                                    val fileRequestBody = inputStream?.readBytes()?.toRequestBody(context.contentResolver.getType(uri)?.toMediaTypeOrNull())
+                                    inputStream?.close()
+                                    if (fileRequestBody != null) {
+                                        MultipartBody.Part.createFormData("suket", getFileName(context, uri) ?: "suket_file", fileRequestBody)
+                                    } else null
+                                }
+
+                                val response = RetrofitClientCuti.instance.submitCuti(
+                                    token = token,
+                                    alasan = alasanBody,
+                                    tanggalMulai = tglMulaiBody,
+                                    tanggalSelesai = tglSelesaiBody,
+                                    keterangan = keteranganBody,
+                                    suket = filePart
+                                )
+
+                                if (response.isSuccessful) {
+                                    val successMessage = response.body()?.message ?: "Pengajuan cuti berhasil diajukan!"
+                                    Toast.makeText(context, successMessage, Toast.LENGTH_LONG).show()
+                                    navController.popBackStack()
+                                } else {
+                                    val errorBody = response.errorBody()?.string() ?: "Gagal mengajukan cuti (${response.code()})"
+                                    Log.e("CUTI_API_ERROR", "Error: $errorBody, Code: ${response.code()}")
+                                    Toast.makeText(context, "Gagal: $errorBody", Toast.LENGTH_LONG).show()
+                                }
+
+                            } catch (e: Exception) {
+                                Log.e("CUTI_API_EXCEPTION", "Exception: ${e.message}")
+                                Toast.makeText(context, "Terjadi kesalahan jaringan: ${e.message}", Toast.LENGTH_LONG).show()
+                            } finally {
+                                isLoading = false
+                            }
                         }
-                        // --- Logika Mock Selesai ---
                     },
                     enabled = !isLoading,
                     modifier = Modifier
