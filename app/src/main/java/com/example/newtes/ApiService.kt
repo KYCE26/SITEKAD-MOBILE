@@ -50,7 +50,7 @@ object RetrofitClient {
 // --- TAMBAHKAN OBJECT BARU INI UNTUK CUTI (PORT 10084) ---
 object RetrofitClientCuti {
     // Pastikan IP dan /v1/ nya sudah benar
-    private const val BASE_URL = "http://202.138.248.93:10084/v1/"
+    private const val BASE_URL = "http://202.138.248.93:11084/v1/"
 
     val instance: ApiService by lazy {
         val retrofit = Retrofit.Builder()
